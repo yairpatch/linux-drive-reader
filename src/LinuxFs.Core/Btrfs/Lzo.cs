@@ -100,14 +100,19 @@ internal static class Lzo
         if (src.Length < 4) throw Bad();
         int total = (int)Math.Min(BitConverter.ToUInt32(src), (uint)src.Length);
         int pos = 4, outPos = 0;
+        // Each block expands to at most one sector, but the last may hold more than the caller wants
+        // (zero padding after the end of a small file), so expand into a spare sector and keep what fits.
+        var sector = new byte[sectorSize];
         while (pos + 4 <= total && outPos < dst.Length)
         {
             int segment = (int)BitConverter.ToUInt32(src[pos..]);
             pos += 4;
             if (segment <= 0 || pos + segment > src.Length) throw Bad();
-            int room = Math.Min(sectorSize, dst.Length - outPos);
-            Decompress(src.Slice(pos, segment), dst.Slice(outPos, room));
-            outPos += room;
+            int produced = Decompress(src.Slice(pos, segment), sector);
+            int room = Math.Min(Math.Min(sectorSize, dst.Length - outPos), produced);
+            sector.AsSpan(0, room).CopyTo(dst[outPos..]);
+            // A short block mid-file still stands for a whole sector; the rest of it reads as zeros.
+            outPos += Math.Min(sectorSize, dst.Length - outPos);
             pos += segment;
             int left = sectorSize - pos % sectorSize;
             if (left < 4) pos += left; // a block header never straddles a sector boundary

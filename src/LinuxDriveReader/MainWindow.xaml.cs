@@ -10,6 +10,7 @@ using LinuxFs.Core;
 using LinuxFs.Core.Containers;
 using LinuxFs.Core.Detection;
 using LinuxFs.Core.Devices;
+using LinuxFs.Core.Smb;
 using Microsoft.Win32;
 
 namespace LinuxDriveReader;
@@ -45,12 +46,13 @@ public partial class MainWindow : Window
         {
             foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
                 if (File.Exists(arg)) AddImage(arg);
+            await Task.Run(RemoveStaleDrives);
             await RefreshDisksAsync();
             var first = _imageItems.SelectMany(i => i.Volumes.OfType<VolumeItem>()).SelectMany(v => v.Browsable()).FirstOrDefault();
             if (first != null) await OpenVolumeAsync(first);
         };
         Closing += (_, _) => SaveSettings();
-        Closed += (_, _) => CloseVolume();
+        Closed += (_, _) => { EjectAll(); CloseVolume(); };
         UpdateButtons();
     }
 
@@ -74,6 +76,7 @@ public partial class MainWindow : Window
         var disks = await Task.Run(ScanPhysicalDisks);
         foreach (var image in _imageItems) await Task.Run(() => FillVolumes(image));
         DiskTree.ItemsSource = disks.Concat(_imageItems).ToList();
+        RestoreDriveLetters();
         SetStatus(StatusForFolder());
     }
 
@@ -94,6 +97,7 @@ public partial class MainWindow : Window
             var item = new DiskItem
             {
                 Title = d.Model,
+                Id = $"{d.Path}|{d.Serial}|{d.Size}",
                 Detail = $"Disk {d.Number} · " + string.Join(" · ", tags),
                 Removable = d.Removable || d.Bus == "USB",
                 Open = () => new CachedDevice(new PhysicalDiskDevice(path)),
@@ -117,6 +121,7 @@ public partial class MainWindow : Window
                 {
                     Disk = item, Fs = v.FileSystem, Size = length,
                     Name = v.Partition.Number == 0 ? "Whole disk" : $"Partition {v.Partition.Number}",
+                    Location = $"{item.Id}/{v.Partition.Number}@{offset}",
                     PartitionType = v.Partition.TypeName, PartitionName = v.Partition.Name,
                     Map = root => new SubDevice(root, offset, length),
                 };
@@ -153,6 +158,7 @@ public partial class MainWindow : Window
                     var child = new VolumeItem
                     {
                         Disk = item.Disk, Name = $"{group.Name}/{lv.Name}", Size = lv.Size, Fs = fs,
+                        Location = $"{item.Location}/{group.Name}/{lv.Name}",
                         Map = r => lv.Open(item.Map(r)),
                     };
                     Expand(child, root);
@@ -166,6 +172,7 @@ public partial class MainWindow : Window
                 var child = new VolumeItem
                 {
                     Disk = item.Disk, Name = "Unlocked contents", Size = device.Length, Fs = FsDetector.Detect(device),
+                    Location = item.Location + "/unlocked",
                     Map = r => key.Open(item.Map(r)),
                 };
                 Expand(child, root);
@@ -192,6 +199,7 @@ public partial class MainWindow : Window
         var item = new DiskItem
         {
             Title = Path.GetFileName(full),
+            Id = full.ToLowerInvariant(),
             Detail = $"Disk image · {Format.Size(size)}",
             ImagePath = full,
             Open = () => new CachedDevice(new ImageFileDevice(full)),
@@ -386,6 +394,161 @@ public partial class MainWindow : Window
         UnlockError.Visibility = Visibility.Visible;
     }
 
+    // --------------------------------------------------------- drive letter
+
+    /// <summary>A volume currently published as a Windows drive letter. It holds its own handle to the disk.</summary>
+    private sealed record Mount(string Key, char Letter, string Share, IBlockDevice Device, IFileSystem Fs);
+
+    private readonly List<Mount> _mounts = new();
+    private readonly HashSet<string> _usedShares = new(StringComparer.OrdinalIgnoreCase);
+    private SmbServer? _smb;
+
+    private static string MountsFile => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LinuxDriveReader", "mounted.txt");
+
+    /// <summary>Notes which letters are in use, so a later run can tidy up if this one ends without ejecting.</summary>
+    private void RememberMounts()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(MountsFile)!);
+            File.WriteAllText(MountsFile, new string(_mounts.Select(m => m.Letter).ToArray()));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Removes drive letters a previous run left behind (after a crash or power cut).</summary>
+    private static void RemoveStaleDrives()
+    {
+        try
+        {
+            if (!File.Exists(MountsFile)) return;
+            string letters = File.ReadAllText(MountsFile);
+            foreach (char letter in letters) DriveMapper.RemoveIfStale(letter, App.IsElevated);
+            File.Delete(MountsFile);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+    }
+
+    private async void MountDrive_Click(object sender, RoutedEventArgs e)
+    {
+        var v = _volume;
+        if (v == null || _busy) return;
+        if (!DriveMapper.IsSupported)
+        {
+            ShowError("Mounting as a drive letter needs Windows 11 version 24H2 or newer. On this version of Windows you can still browse and copy files here.");
+            return;
+        }
+        if (DriveMapper.FindFreeLetter() is not { } letter) { ShowError("Every drive letter is already in use."); return; }
+
+        _busy = true;
+        LoadingBar.Visibility = Visibility.Visible;
+        UpdateButtons();
+        SetStatus($"Mounting as drive {letter}:…");
+        try
+        {
+            bool elevated = App.IsElevated;
+            var options = new OpenOptions(Settings.Current.VerifyIntegrity);
+            var mount = await Task.Run(() =>
+            {
+                var device = v.Disk.Open();
+                try
+                {
+                    var fs = FileSystems.Open(v.Map(device), options);
+                    _smb ??= SmbServer.ForCurrentUser();
+                    string share = ShareName(fs.Label.Length > 0 ? fs.Label : v.Name);
+                    _smb.AddShare(share, fs, v.Size);
+                    string? error = DriveMapper.Map(letter, _smb, share, viaShell: elevated);
+                    if (error != null) { _smb.RemoveShare(share); throw new IOException(error); }
+                    return new Mount(v.Location, letter, share, device, fs);
+                }
+                catch { device.Dispose(); throw; }
+            });
+            _mounts.Add(mount);
+            RememberMounts();
+            v.DriveLetter = letter;
+            if (Settings.Current.OpenExplorerAfterMount) OpenInExplorer(letter);
+        }
+        catch (Exception ex) when (IsExpected(ex)) { ShowError("This volume could not be mounted as a drive: " + ex.Message); }
+        finally
+        {
+            _busy = false;
+            LoadingBar.Visibility = Visibility.Hidden;
+            UpdateButtons();
+            SetStatus(StatusForFolder());
+        }
+    }
+
+    /// <summary>A share name Windows accepts, unique among the mounted volumes.</summary>
+    private string ShareName(string wanted)
+    {
+        string clean = new(wanted.Where(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_').Take(40).ToArray());
+        if (clean.Length == 0) clean = "linux";
+        // A name is never reused within one run, so Windows always makes a fresh connection to the new volume.
+        string name = clean;
+        for (int i = 2; !_usedShares.Add(name); i++) name = $"{clean}-{i}";
+        return name;
+    }
+
+    private static void OpenInExplorer(char letter)
+    {
+        try { Process.Start(new ProcessStartInfo("explorer.exe", $"{letter}:\\") { UseShellExecute = false }); }
+        catch (Win32Exception) { }
+    }
+
+    private void OpenDrive_Click(object sender, RoutedEventArgs e)
+    {
+        if (_volume != null && _mounts.FirstOrDefault(m => m.Key == _volume.Location) is { } mount) OpenInExplorer(mount.Letter);
+    }
+
+    private async void EjectDrive_Click(object sender, RoutedEventArgs e)
+    {
+        if (_volume == null || _busy || _mounts.FirstOrDefault(m => m.Key == _volume.Location) is not { } mount) return;
+        _busy = true;
+        UpdateButtons();
+        SetStatus($"Ejecting drive {mount.Letter}:…");
+        bool elevated = App.IsElevated;
+        await Task.Run(() => Eject(mount, elevated));
+        _mounts.Remove(mount);
+        RememberMounts();
+        RestoreDriveLetters();
+        _busy = false;
+        UpdateButtons();
+        SetStatus(StatusForFolder());
+    }
+
+    private void Eject(Mount mount, bool elevated)
+    {
+        DriveMapper.Unmap(mount.Letter, viaShell: elevated);
+        Thread.Sleep(elevated ? 1500 : 200); // let Windows let go before the disk handle closes
+        _smb?.RemoveShare(mount.Share);
+        mount.Fs.Dispose();
+        mount.Device.Dispose();
+    }
+
+    private void EjectAll()
+    {
+        bool elevated = App.IsElevated;
+        foreach (var mount in _mounts.ToList())
+        {
+            try { Eject(mount, elevated); } catch (Exception ex) when (IsExpected(ex)) { }
+        }
+        _mounts.Clear();
+        RememberMounts();
+        _smb?.Dispose();
+        _smb = null;
+    }
+
+    /// <summary>Re-marks mounted volumes after the disk list has been rebuilt or a container opened.</summary>
+    private void RestoreDriveLetters()
+    {
+        IEnumerable<VolumeItem> All(IEnumerable<object> items) =>
+            items.OfType<VolumeItem>().SelectMany(v => new[] { v }.Concat(All(v.Children)));
+        if (DiskTree.ItemsSource is not IEnumerable<DiskItem> disks) return;
+        foreach (var v in disks.SelectMany(d => All(d.Volumes)))
+            v.DriveLetter = _mounts.FirstOrDefault(m => m.Key == v.Location)?.Letter;
+    }
+
     // ------------------------------------------------------------- settings
 
     private bool _loadingSettings;
@@ -414,6 +577,7 @@ public partial class MainWindow : Window
             WindowsDiskBox.IsChecked = s.ShowWindowsDisk;
             VerifyBox.IsChecked = s.VerifyIntegrity;
             DoubleClickBox.IsChecked = s.DoubleClickOpens;
+            ExplorerBox.IsChecked = s.OpenExplorerAfterMount;
             DatesBox.IsChecked = s.KeepDates;
             OpenFolderBox.IsChecked = s.OfferOpenFolder;
             _loadingSettings = false;
@@ -435,6 +599,7 @@ public partial class MainWindow : Window
         s.ShowWindowsDisk = WindowsDiskBox.IsChecked == true;
         s.VerifyIntegrity = VerifyBox.IsChecked == true;
         s.DoubleClickOpens = DoubleClickBox.IsChecked == true;
+        s.OpenExplorerAfterMount = ExplorerBox.IsChecked == true;
         s.KeepDates = DatesBox.IsChecked == true;
         s.OfferOpenFolder = OpenFolderBox.IsChecked == true;
         s.Save();
@@ -606,6 +771,11 @@ public partial class MainWindow : Window
         BackButton.IsEnabled = !_busy && _history.Count > 0;
         SaveButton.IsEnabled = !_busy && _fs != null && _rows.Count > 0;
         FilterBox.IsEnabled = !_busy && _fs != null;
+        var mount = _volume == null ? null : _mounts.FirstOrDefault(m => m.Key == _volume.Location);
+        DriveButton.IsEnabled = !_busy && _fs != null && mount == null;
+        DriveButton.Visibility = mount == null ? Visibility.Visible : Visibility.Collapsed;
+        DriveBar.Visibility = mount != null && _fs != null ? Visibility.Visible : Visibility.Collapsed;
+        if (mount != null) DriveBarText.Text = $"This volume is available in File Explorer and other programs as drive {mount.Letter}:  It is read-only.";
         int selected = FileList.SelectedItems.Count;
         SaveButtonText.Text = selected == 0 ? "Copy this folder to Windows" : selected == 1 ? "Copy to Windows" : $"Copy {selected} items to Windows";
         DiskTree.IsEnabled = !_busy;

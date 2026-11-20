@@ -136,7 +136,15 @@
                                 <TextBlock x:Name="SaveButtonText" Text="Copy to Windows"/>
                             </StackPanel>
                         </Button>
-                        <Grid DockPanel.Dock="Right" Width="190" Margin="8,0,0,0">
+                        <Button x:Name="DriveButton" DockPanel.Dock="Right" Click="MountDrive_Click" IsEnabled="False" Margin="8,0,0,0"
+                                ToolTip="Make this volume appear in File Explorer, and every other program, as a drive letter"
+                                AutomationProperties.AutomationId="MountDrive">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xEDA2;" FontFamily="{StaticResource Icons}" VerticalAlignment="Center" Margin="0,1,8,0"/>
+                                <TextBlock Text="Mount as drive"/>
+                            </StackPanel>
+                        </Button>
+                        <Grid DockPanel.Dock="Right" Width="170" Margin="8,0,0,0">
                             <TextBox x:Name="FilterBox" TextChanged="FilterBox_TextChanged" IsEnabled="False" Padding="8,5,8,5"
                                      ToolTip="Show only names containing this text (Ctrl+F)" AutomationProperties.AutomationId="Filter" AutomationProperties.Name="Filter this folder"/>
                             <TextBlock x:Name="FilterHint" Text="Filter this folder" IsHitTestVisible="False" VerticalAlignment="Center" Margin="10,0,0,0"
@@ -148,6 +156,17 @@
                     </DockPanel>
 
                     <ProgressBar x:Name="LoadingBar" DockPanel.Dock="Top" Height="2" IsIndeterminate="True" Visibility="Hidden" BorderThickness="0" Background="Transparent"/>
+
+                    <Border x:Name="DriveBar" DockPanel.Dock="Top" Margin="10,4,10,4" Padding="12,6" CornerRadius="6" Visibility="Collapsed"
+                            Background="{DynamicResource SystemFillColorSuccessBackgroundBrush}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Eject" Click="EjectDrive_Click" Margin="8,0,0,0" AutomationProperties.AutomationId="EjectDrive"/>
+                            <Button DockPanel.Dock="Right" Content="Open in File Explorer" Click="OpenDrive_Click" Margin="8,0,0,0"/>
+                            <TextBlock DockPanel.Dock="Left" Text="&#xEDA2;" FontFamily="{StaticResource Icons}" FontSize="15" VerticalAlignment="Center" Margin="0,1,10,0"
+                                       Foreground="{DynamicResource SystemFillColorSuccessBrush}"/>
+                            <TextBlock x:Name="DriveBarText" VerticalAlignment="Center" TextWrapping="Wrap" AutomationProperties.AutomationId="DriveBarText"/>
+                        </DockPanel>
+                    </Border>
 
                     <Border x:Name="WarningBar" DockPanel.Dock="Top" Margin="10,4,10,4" Padding="12,8" CornerRadius="6" Visibility="Collapsed"
                             Background="{DynamicResource SystemFillColorCautionBackgroundBrush}">
@@ -323,6 +342,16 @@
                                 <StackPanel>
                                     <TextBlock Text="Offer to open the folder after copying"/>
                                     <TextBlock Text="Adds an 'Open the folder now?' question to the summary shown when a copy finishes." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="ExplorerBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Open File Explorer after mounting a drive"/>
+                                <StackPanel>
+                                    <TextBlock Text="Open File Explorer after mounting a drive"/>
+                                    <TextBlock Text="'Mount as drive' gives a volume a drive letter that every program can read. With this on, a File Explorer window opens on it straight away." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
                                 </StackPanel>
                             </DockPanel>
                         </Border>

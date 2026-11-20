@@ -154,6 +154,37 @@ tar cf - /usr/share/doc 2>/dev/null | head -c 6000000 > "$BSRC/docs.tar" || true
 cp /usr/lib/x86_64-linux-gnu/libc.so.6 "$BSRC/libc.bin"
 head -c 1500 /dev/zero | tr '\0' 'a' > "$BSRC/tiny_compressible.txt"
 ( head -c 300000 /dev/urandom; seq 1 50000; head -c 300000 /dev/urandom ) > "$BSRC/mixed.bin"
+# Hundreds of ordinary small text and JSON files, 60 bytes to 9 KB: the sizes btrfs compresses
+# inside the metadata or into a single block, where compressors behave differently than on big files.
+python3 - "$BSRC/smalltext" <<'PY'
+import glob, json, os, random, sys
+out = sys.argv[1]
+os.makedirs(out)
+random.seed(7)
+sources = sorted(glob.glob("/usr/lib/python3*/**/*.py", recursive=True))[:4000]
+random.shuffle(sources)
+n = 0
+for path in sources:
+    if n >= 320: break
+    try: data = open(path, "rb").read()
+    except OSError: continue
+    if len(data) < 9000: continue
+    start = random.randrange(0, len(data) - 9000)
+    size = random.choice([60, 90, 150, 300, 500, 800, 1000, 1024, 1500, 2000, 2047, 2048, 2049, 3000, 4095, 4096, 4097, 6000, 9000])
+    open(os.path.join(out, "text_%03d_%d.py" % (n, size)), "wb").write(data[start:start + size])
+    n += 1
+words = ["name", "version", "description", "permissions", "background", "content_scripts", "matches", "icons", "action", "default_popup",
+         "host_permissions", "storage", "tabs", "activeTab", "scripting", "service_worker", "js", "css", "run_at", "document_idle"]
+for i in range(120):
+    doc = {"manifest_version": 3, "name": "ext %d" % i, "version": "1.%d.%d" % (i % 7, i)}
+    for k in range(random.randrange(2, 40)):
+        key = random.choice(words)
+        doc[key + ("_%d" % k if k % 3 == 0 else "")] = random.choice([
+            [random.choice(words) for _ in range(random.randrange(1, 6))],
+            {"16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png"},
+            "https://*.example.com/*", random.randrange(100000), True])
+    open(os.path.join(out, "manifest_%03d.json" % i), "w").write(json.dumps(doc, indent=random.choice([None, 2, 4])))
+PY
 
 btrfs_extras() {
   # Overwriting the middle of a file leaves older extents only partly referenced.

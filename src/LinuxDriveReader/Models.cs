@@ -12,6 +12,8 @@ public sealed class DiskItem
     public required string Detail { get; init; }
     public required Func<IBlockDevice> Open { get; init; }
     public string? ImagePath { get; init; }
+    /// <summary>Stays the same when the disk list is rebuilt, so mounted drives can be matched up again.</summary>
+    public required string Id { get; init; }
     public bool Removable { get; init; }
     public bool IsSelected { get; set; }
     public string Icon => ImagePath != null ? "" : Removable ? "" : "";
@@ -27,6 +29,8 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
     public required DiskItem Disk { get; init; }
     /// <summary>"Partition 2", "Volume vg/root", "Unlocked contents"…</summary>
     public required string Name { get; init; }
+    /// <summary>Disk id plus the names leading here; identifies the same volume across rescans.</summary>
+    public required string Location { get; init; }
     public required long Size { get; init; }
     public required LinuxFs.Core.Detection.DetectedFs Fs { get; init; }
     public string PartitionType { get; init; } = "";
@@ -49,6 +53,14 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
     {
         get => _selected;
         set { if (_selected != value) { _selected = value; PropertyChanged?.Invoke(this, new(nameof(IsSelected))); } }
+    }
+
+    private char? _driveLetter;
+    /// <summary>The Windows drive letter this volume is currently mounted as, if any.</summary>
+    public char? DriveLetter
+    {
+        get => _driveLetter;
+        set { if (_driveLetter != value) { _driveLetter = value; PropertyChanged?.Invoke(this, new(nameof(Detail))); } }
     }
 
     public bool IsLuks => Fs.Type == "LUKS";
@@ -79,7 +91,7 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
             bool unknown = Fs.Type == LinuxFs.Core.Detection.FsDetector.Unknown;
             string type = unknown && PartitionType.Length > 0 ? PartitionType : Fs.Type;
             string note = Fs.Supported ? "" : unknown ? " · no known filesystem" : $" · {Fs.Note ?? "not supported yet"}";
-            return $"{type} · {size}{note}";
+            return $"{type} · {size}{note}" + (DriveLetter is { } d ? $" · drive {d}:" : "");
         }
     }
 

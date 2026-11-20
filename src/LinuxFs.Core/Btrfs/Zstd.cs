@@ -28,8 +28,21 @@ internal sealed class Zstd
 
     private Zstd(byte[] src) => _src = src;
 
-    /// <summary>Decompresses the first frame in <paramref name="src"/> into <paramref name="dst"/>; returns bytes written.</summary>
-    public static int Decompress(byte[] src, int length, byte[] dst) => new Zstd(src).Frame(length, dst);
+    /// <summary>
+    /// Decompresses the first frame in <paramref name="src"/> and copies as much of it as fits into
+    /// <paramref name="dst"/>; returns the bytes copied. A frame may legitimately hold more than the caller
+    /// wants: btrfs can compress a small file's whole block, zero padding included, while recording only the
+    /// file's own length. Linux decodes the lot and keeps what it needs, and so does this.
+    /// </summary>
+    public static int Decompress(byte[] src, int length, byte[] dst)
+    {
+        // btrfs never compresses more than 128 KiB at once; leave room for that even if less was asked for.
+        var whole = dst.Length >= 256 * 1024 ? dst : new byte[256 * 1024];
+        int produced = new Zstd(src).Frame(length, whole);
+        int wanted = Math.Min(produced, dst.Length);
+        if (!ReferenceEquals(whole, dst)) Buffer.BlockCopy(whole, 0, dst, 0, wanted);
+        return wanted;
+    }
 
     private int Frame(int end, byte[] dst)
     {

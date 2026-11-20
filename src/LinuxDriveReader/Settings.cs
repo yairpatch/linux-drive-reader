@@ -24,6 +24,7 @@ public sealed class Settings
     public bool KeepDates { get; set; } = true;
     public bool OfferOpenFolder { get; set; } = true;
     public bool DoubleClickOpens { get; set; } = true;
+    public bool OpenExplorerAfterMount { get; set; } = true;
 
     /// <summary>The settings in use; loaded once, saved whenever something changes.</summary>
     public static Settings Current { get; } = Load() ?? new Settings();

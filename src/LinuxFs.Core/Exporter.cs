@@ -116,7 +116,7 @@ public static class Exporter
         return safe;
     }
 
-    private static string UniqueName(string name, HashSet<string> used)
+    internal static string UniqueName(string name, HashSet<string> used)
     {
         if (used.Add(name)) return name;
         string stem = Path.GetFileNameWithoutExtension(name), ext = Path.GetExtension(name);

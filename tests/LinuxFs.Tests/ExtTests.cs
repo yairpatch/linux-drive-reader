@@ -81,7 +81,9 @@ public class ExtTests
             var kind = e.Type switch { 'd' => FsNodeKind.Directory, 'f' => FsNodeKind.File, 'l' => FsNodeKind.Symlink, _ => FsNodeKind.Other };
             Assert.True(kind == n.Kind, $"{path}: kind {n.Kind}, expected {kind}");
             Assert.True((int)(n.Mode & 0xFFF) == e.Mode, $"{path}: mode {Convert.ToString(n.Mode & 0xFFF, 8)}, expected {Convert.ToString(e.Mode, 8)}");
-            Assert.True(n.ModifiedUtc.HasValue && new DateTimeOffset(DateTime.SpecifyKind(n.ModifiedUtc.Value, DateTimeKind.Utc)).ToUnixTimeSeconds() == e.Mtime,
+            // Linux invents "now" as the date of the empty stand-in folder a snapshot shows for a nested subvolume.
+            bool standIn = n.Volume == -1;
+            Assert.True(standIn || n.ModifiedUtc.HasValue && new DateTimeOffset(DateTime.SpecifyKind(n.ModifiedUtc.Value, DateTimeKind.Utc)).ToUnixTimeSeconds() == e.Mtime,
                 $"{path}: mtime {n.ModifiedUtc:o}, expected {e.Mtime}");
             if (kind == FsNodeKind.Symlink) Assert.Equal(e.Link, n.LinkTarget);
             if (kind == FsNodeKind.File)
