@@ -1,6 +1,7 @@
 name: Website
 
-# Publishes the site/ folder to GitHub Pages whenever it changes on main.
+# Publishes the site/ folder to GitHub Pages whenever it changes on main, and after each release
+# (the installer workflow starts it), so the version shown on the page stays current.
 on:
   push:
     branches: [main]
@@ -9,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 
@@ -24,6 +26,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+      - name: Fill in the current release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName 2>/dev/null | sed 's/^v//')
+          [ -n "$version" ] || version=$(grep -oP '(?<=<Version>)[^<]+' src/LinuxDriveReader/LinuxDriveReader.csproj)
+          sed -i "s/__VERSION__/$version/g" site/index.html
+          sed -i "s/__LASTMOD__/$(date -u +%Y-%m-%d)/g" site/sitemap.xml
+          echo "version $version"
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:

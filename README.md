@@ -52,7 +52,7 @@ xfs metadata checksum verification, multi-disk btrfs (RAID 0/10/5/6), LVM volume
 
 ## Website
 
-`site/` is the project website, published to GitHub Pages by `.github/workflows/website.yml` whenever it changes. Its screenshots come from `tools/make-demo-images.sh` and `tools/website-screenshots.ps1`.
+`site/` is the project website, published to GitHub Pages by `.github/workflows/website.yml` whenever it changes. Its screenshots come from `tools/make-demo-images.sh` and `tools/website-screenshots.ps1`. `__VERSION__` in the page and `__LASTMOD__` in `sitemap.xml` are filled in at publish time; the installer workflow republishes the site after each release.
 
 ## Licence
 

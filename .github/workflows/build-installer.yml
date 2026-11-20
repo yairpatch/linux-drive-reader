@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write   # needed to create the release
+  actions: write    # needed to start the website workflow afterwards
 
 jobs:
   installer:
@@ -56,3 +57,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create $env:GITHUB_REF_NAME dist/LinuxDriveReaderSetup.exe dist/LinuxDriveReader.exe dist/SHA256SUMS.txt --title "Linux Drive Reader $env:GITHUB_REF_NAME" --generate-notes
+
+      - name: Update the website's version number
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run website.yml --ref main
