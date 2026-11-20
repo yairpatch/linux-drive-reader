@@ -109,6 +109,8 @@ public class ExtTests
     [InlineData("btrfs_xxhash", "btrfs")]
     [InlineData("btrfs_sha256", "btrfs")]
     [InlineData("btrfs_blake2", "btrfs")]
+    [InlineData("xfs_default", "xfs")]
+    [InlineData("xfs_1k", "xfs")]
     public void Whole_tree_matches_what_Linux_wrote(string image, string type)
     {
         string path = Path.Combine(Images, image + ".img");
@@ -158,6 +160,8 @@ public class ExtTests
     [InlineData("btrfs_zlib", "mixed.bin")]
     [InlineData("btrfs_lzo", "docs.tar")]
     [InlineData("btrfs_zstd", "numbers.txt")]
+    [InlineData("xfs_default", "many_extents.bin")]
+    [InlineData("xfs_1k", "many_extents.bin")]
     public void Random_access_reads_match_a_sequential_read(string image, string file)
     {
         using var dev = new CachedDevice(new ImageFileDevice(Path.Combine(Images, image + ".img")));
@@ -229,6 +233,26 @@ public class ExtTests
             finally { if (Directory.Exists(dest)) Directory.Delete(dest, true); }
         }
         finally { File.Delete(damaged); }
+    }
+
+    [Fact]
+    public void Xfs_old_v4_format_matches_Linux()
+    {
+        string path = Path.Combine(Images, "xfs_v4.img");
+        Assert.True(File.Exists(path), "xfs_v4.img was not built: the build machine's kernel or mkfs.xfs has no v4 support");
+        using var dev = new CachedDevice(new ImageFileDevice(path));
+        AssertMatchesLinux(dev, path, "xfs");
+    }
+
+    [Fact]
+    public void Xfs_warns_when_the_log_was_not_closed_cleanly()
+    {
+        using var dev = new CachedDevice(new ImageFileDevice(Path.Combine(Images, "xfs_dirty.img")));
+        using var fs = FileSystems.Open(dev);
+        Assert.Contains(fs.Warnings, w => w.Contains("not cleanly unmounted"));
+        var all = new Dictionary<string, FsNode>();
+        Walk(fs, fs.Root, "", all); // still browsable
+        Assert.Contains("hello.txt", all.Keys);
     }
 
     [Fact]

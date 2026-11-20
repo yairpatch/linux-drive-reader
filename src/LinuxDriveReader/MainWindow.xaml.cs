@@ -179,7 +179,7 @@ public partial class MainWindow : Window
         {
             EmptyHint.Text = v.Info.FileSystem.Type == LinuxFs.Core.Detection.FsDetector.Unknown
                 ? "No known filesystem was found on this partition."
-                : $"This partition contains {v.Info.FileSystem.Type}, which this version cannot read yet. It currently reads ext2, ext3, ext4 and btrfs.";
+                : $"This partition contains {v.Info.FileSystem.Type}, which this version cannot read yet. It currently reads ext2, ext3, ext4, btrfs and xfs.";
             EmptyHint.Visibility = Visibility.Visible;
             SetStatus("Ready");
             return;

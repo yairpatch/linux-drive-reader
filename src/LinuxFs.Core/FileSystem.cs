@@ -3,6 +3,7 @@ using LinuxFs.Core.Devices;
 using LinuxFs.Core.Btrfs;
 using LinuxFs.Core.Ext;
 using LinuxFs.Core.Partitions;
+using LinuxFs.Core.Xfs;
 
 namespace LinuxFs.Core;
 
@@ -77,6 +78,7 @@ public static class FileSystems
         var detected = FsDetector.Detect(volume);
         if (detected.Type is "ext2" or "ext3" or "ext4") return new ExtFileSystem(volume);
         if (detected.Type == "btrfs") return new BtrfsFileSystem(volume);
+        if (detected.Type == "xfs") return new XfsFileSystem(volume);
         throw new NotSupportedException(detected.Type == FsDetector.Unknown
             ? "No known filesystem was found on this volume."
             : $"{detected.Type} is not supported yet.");

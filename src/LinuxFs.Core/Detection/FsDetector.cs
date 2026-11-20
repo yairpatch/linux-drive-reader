@@ -36,7 +36,11 @@ public static class FsDetector
             string label = Text(b, 0x10000 + 0x12B, 256);
             return new DetectedFs("btrfs", label.Length > 0 ? label : null, true);
         }
-        if (Has(b, 0, "XFSB"u8)) return No("xfs", null, Text(b, 108, 12));
+        if (Has(b, 0, "XFSB"u8))
+        {
+            string label = Text(b, 108, 12);
+            return new DetectedFs("xfs", label.Length > 0 ? label : null, true);
+        }
         if (n >= 1028 && U32(b, 1024) == 0xF2F52010) return No("f2fs");
         if (Has(b, 4096 + 24, new byte[] { 0xC6, 0x85, 0x73, 0xF6, 0x4E, 0x1A, 0x45, 0xCA, 0x82, 0x65, 0xF5, 0x7F, 0x48, 0xBA, 0x6D, 0x81 })) return No("bcachefs");
         if (Has(b, 0x10034, "ReIsEr"u8)) return No("reiserfs");

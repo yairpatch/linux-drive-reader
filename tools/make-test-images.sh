@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the disk images the tests read. Development-time only: needs Linux and root
 # (it formats and loop-mounts images). The app itself never uses this.
-#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs]
+#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs|xfs]
 set -euo pipefail
 OUT="$1"
 if [ $# -ge 2 ]; then ONLY=$2; else ONLY=all; fi
@@ -98,7 +98,7 @@ PY
   echo "fragmented.bin extents: $(filefrag "$MNT/fragmented.bin" | sed 's/.*: //')"
 }
 
-if [ "$ONLY" != btrfs ]; then
+if [ "$ONLY" = all ] || [ "$ONLY" = ext ]; then
 # ---- single-filesystem images -------------------------------------------
 build ext4_default 48M "$SRC" ""        -t ext4 -L ext4test
 build ext3         48M "$SRC" ""        -t ext3 -L ext3test
@@ -137,7 +137,7 @@ cp "$M" "$OUT/mbr.img"
 echo "built gpt.img mbr.img"
 fi
 
-if [ "$ONLY" != ext ]; then
+if [ "$ONLY" = all ] || [ "$ONLY" = btrfs ]; then
 # ---- btrfs ---------------------------------------------------------------
 BSRC=$W/bsrc
 mkdir -p "$BSRC"
@@ -196,5 +196,65 @@ build_btrfs btrfs_mixed       128M compress=zstd ""                   -L mixed -
 build_btrfs btrfs_xxhash      160M compress=zstd ""                   -L xxhash --csum xxhash
 build_btrfs btrfs_sha256      160M noatime ""                         -L sha256 --csum sha256
 build_btrfs btrfs_blake2      160M compress=lzo ""                    -L blake2 --csum blake2
+fi
+
+if [ "$ONLY" = all ] || [ "$ONLY" = xfs ]; then
+# ---- xfs -----------------------------------------------------------------
+XSRC=$W/xsrc
+mkdir -p "$XSRC/midfiles"
+cp -a "$SRC/." "$XSRC/"
+seq 1 300000 > "$XSRC/numbers.txt"
+for i in $(seq 1 40); do echo "mid $i" > "$XSRC/midfiles/entry_$i.txt"; done
+
+xfs_extras() {
+  fallocate -l 2M "$MNT/prealloc.bin"
+  printf 'written' | dd of="$MNT/prealloc.bin" bs=1 seek=500000 conv=notrunc status=none
+  truncate -s 10M "$MNT/hole_tail.bin"
+  # Thousands of separate extents force the file's extent list into a multi-level tree.
+  python3 - "$MNT/many_extents.bin" <<'PY'
+import os, sys
+with open(sys.argv[1], "wb") as f:
+    for i in range(6000):
+        f.seek(i * 8192)
+        f.write(os.urandom(4096))
+        if i % 200 == 0:
+            f.flush(); os.fsync(f.fileno())
+PY
+}
+hook_dirty() { # a copy taken while still mounted: its log has no unmount record
+  xfs_freeze -f "$MNT"; xfs_freeze -u "$MNT"   # push everything so far out of the log
+  echo "late change" > "$MNT/late.txt"; mkdir "$MNT/late_dir"; sync
+  cp "$img" "$OUT/xfs_dirty.img"
+  rm -r "$MNT/late.txt" "$MNT/late_dir"
+}
+build_xfs() { # <name> <size> <hook or ''> <mkfs.xfs args...>
+  local name=$1 size=$2 hook=$3; shift 3
+  local img=$W/$name.img
+  rm -f "$img"; truncate -s "$size" "$img"
+  mkfs.xfs -q -f "$@" "$img"
+  mount -o loop "$img" "$MNT"
+  cp -a "$XSRC/." "$MNT/"
+  xfs_extras
+  sync
+  if [ -n "$hook" ]; then $hook; fi
+  sync
+  manifest "$MNT" "$OUT/$name.img"
+  umount "$MNT"
+  cp "$img" "$OUT/$name.img"
+  echo "built $name.img ($(filefrag "$OUT/$name.img" >/dev/null 2>&1; echo ok))"
+}
+build_xfs xfs_default 300M hook_dirty -L xfstest
+build_xfs xfs_1k      300M ""         -L xfs1k -b size=1024 -n size=8192
+# The old v4 format: recent kernels refuse to mount it, so let mkfs.xfs fill it from a folder instead.
+V=$W/v4src; mkdir "$V"; cp -a "$XSRC/." "$V/"
+REAL_MNT=$MNT; MNT=$V; xfs_extras; MNT=$REAL_MNT
+P=$W/xfs_v4.img; truncate -s 300M "$P"
+if mkfs.xfs -q -f -m crc=0 -n ftype=0 -L xfsv4 -p "$V" "$P" 2>/dev/null; then
+  manifest "$V" "$OUT/xfs_v4.img"
+  cp "$P" "$OUT/xfs_v4.img"
+  echo "built xfs_v4.img"
+else
+  echo "SKIPPED xfs_v4: this mkfs.xfs no longer supports the old v4 format"
+fi
 fi
 ls -la "$OUT"/*.img
