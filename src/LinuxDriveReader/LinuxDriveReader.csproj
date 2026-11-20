@@ -7,6 +7,8 @@
     <UseWPF>true</UseWPF>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>Linux Drive Reader</AssemblyTitle>
+    <!-- WPF0001: the built-in Windows 11 (Fluent) theme is still flagged as experimental. -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LinuxFs.Core\LinuxFs.Core.csproj" />

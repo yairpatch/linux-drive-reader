@@ -53,9 +53,12 @@ public sealed class BtrfsFileSystem : IFileSystem
     public IReadOnlyList<string> Warnings => _warnings;
     public FsNode Root { get; }
 
-    public BtrfsFileSystem(IBlockDevice device)
+    private readonly bool _verifyData;
+
+    public BtrfsFileSystem(IBlockDevice device, bool verifyData = true)
     {
         _dev = device;
+        _verifyData = verifyData;
         byte[] sb = ReadSuperblock() ?? throw new InvalidDataException("No valid btrfs superblock was found.");
 
         _rootTree = (long)U64(sb, 0x50);
@@ -165,7 +168,7 @@ public sealed class BtrfsFileSystem : IFileSystem
         bool aligned = logical % s == 0 && buffer.Length % s == 0;
         byte[]? sums = null;
         bool[]? has = null;
-        if (aligned) sums = LoadChecksums(logical, buffer.Length / s, out has);
+        if (aligned && _verifyData) sums = LoadChecksums(logical, buffer.Length / s, out has);
 
         long start = logical;
         while (buffer.Length > 0)

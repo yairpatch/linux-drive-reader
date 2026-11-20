@@ -216,6 +216,10 @@ public class ExtTests
             var root = fs.ListDirectory(fs.Root);
             var ex = Assert.Throws<IOException>(() => Hash(fs, root.Single(n => n.Name == "random_3mb.bin")));
             Assert.Contains("integrity", ex.Message);
+            // With verification switched off the damaged bytes are returned as they are.
+            using (var dev2 = new CachedDevice(new ImageFileDevice(damaged)))
+            using (var unchecked2 = FileSystems.Open(dev2, new OpenOptions(VerifyChecksums: false)))
+                Assert.Equal(64, Hash(unchecked2, unchecked2.ListDirectory(unchecked2.Root).Single(n => n.Name == "random_3mb.bin")).Length);
             // Everything else is still readable, including a file that has no checksums at all.
             Assert.Equal("hello world\n", new StreamReader(fs.OpenFile(root.Single(n => n.Name == "hello.txt"))).ReadToEnd());
             Assert.Equal(100000, Hash(fs, root.Single(n => n.Name == "no_checksum.bin")).Length > 0 ? root.Single(n => n.Name == "no_checksum.bin").Size : -1);
@@ -296,6 +300,13 @@ public class ExtTests
             Assert.Equal(new DateTime(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc), File.GetLastWriteTimeUtc(hello));
             string big = Path.Combine(dest, "random_3mb.bin");
             Assert.Equal(expected["random_3mb.bin"].Hash, Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(big))).ToLowerInvariant());
+
+            // Dates can be left as "now" instead.
+            string undated = Path.Combine(dest, "undated");
+            Exporter.Export(fs, fs.ListDirectory(fs.Root).Where(n => n.Name == "hello.txt").ToList(), undated, preserveTimes: false);
+            Assert.True(File.GetLastWriteTimeUtc(Path.Combine(undated, "hello.txt")) > DateTime.UtcNow.AddMinutes(-5));
+            Directory.Delete(undated, true);
+            result = Exporter.Export(fs, Array.Empty<FsNode>(), dest);
 
             // A second export into the same folder must not overwrite anything.
             var again = Exporter.Export(fs, fs.ListDirectory(fs.Root).Where(n => n.Name == "hello.txt").ToList(), dest);

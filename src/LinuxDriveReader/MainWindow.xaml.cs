@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Principal;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using LinuxFs.Core;
 using LinuxFs.Core.Containers;
@@ -18,9 +19,12 @@ public partial class MainWindow : Window
     private readonly List<DiskItem> _imageItems = new();
     private IBlockDevice? _device;
     private IFileSystem? _fs;
-    private VolumeItem? _volume;
+    private VolumeItem? _volume;        // the volume whose files are shown
+    private VolumeItem? _unlockTarget;  // the encrypted volume the unlock panel is asking about
+    private VolumeItem? _current;       // whatever the right-hand side is currently about
     private List<FsNode> _trail = new();
     private readonly Stack<List<FsNode>> _history = new();
+    private List<EntryRow> _rows = new();
     private CancellationTokenSource? _cts;
     private bool _busy;
     private string _sortColumn = "Name";
@@ -30,8 +34,13 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        using (var id = WindowsIdentity.GetCurrent())
-            AdminBanner.Visibility = new WindowsPrincipal(id).IsInRole(WindowsBuiltInRole.Administrator) ? Visibility.Collapsed : Visibility.Visible;
+        var settings = Settings.Current;
+        settings.ApplyTo(this);
+        if (settings is { Sidebar: >= 220 and <= 600 }) SidebarColumn.Width = new GridLength(settings.Sidebar);
+        ApplyColumnSetting();
+        AboutTitle.Text = $"Linux Drive Reader {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)}";
+
+        AdminBar.Visibility = App.IsElevated ? Visibility.Collapsed : Visibility.Visible;
         Loaded += async (_, _) =>
         {
             foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
@@ -40,8 +49,22 @@ public partial class MainWindow : Window
             var first = _imageItems.SelectMany(i => i.Volumes.OfType<VolumeItem>()).SelectMany(v => v.Browsable()).FirstOrDefault();
             if (first != null) await OpenVolumeAsync(first);
         };
+        Closing += (_, _) => SaveSettings();
         Closed += (_, _) => CloseVolume();
+        UpdateButtons();
     }
+
+    private void SaveSettings()
+    {
+        var bounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+        var s = Settings.Current;
+        s.Left = bounds.Left; s.Top = bounds.Top; s.Width = bounds.Width; s.Height = bounds.Height;
+        s.Maximized = WindowState == WindowState.Maximized;
+        s.Sidebar = SidebarColumn.ActualWidth;
+        s.Save();
+    }
+
+    private void Splitter_DragCompleted(object sender, DragCompletedEventArgs e) => SaveSettings();
 
     // ---------------------------------------------------------------- disks
 
@@ -51,7 +74,7 @@ public partial class MainWindow : Window
         var disks = await Task.Run(ScanPhysicalDisks);
         foreach (var image in _imageItems) await Task.Run(() => FillVolumes(image));
         DiskTree.ItemsSource = disks.Concat(_imageItems).ToList();
-        SetStatus(_fs == null ? "Ready" : StatusForFolder());
+        SetStatus(StatusForFolder());
     }
 
     private static List<DiskItem> ScanPhysicalDisks()
@@ -62,6 +85,7 @@ public partial class MainWindow : Window
         catch (Exception) { return items; }
         foreach (var d in disks)
         {
+            if (d.IsSystemDisk && !Settings.Current.ShowWindowsDisk) continue;
             string path = d.Path;
             var tags = new List<string> { Format.Size(d.Size) };
             if (d.Bus.Length > 0) tags.Add(d.Bus);
@@ -69,8 +93,9 @@ public partial class MainWindow : Window
             if (d.IsSystemDisk) tags.Add("Windows disk");
             var item = new DiskItem
             {
-                Title = $"Disk {d.Number} — {d.Model}",
-                Detail = string.Join(" · ", tags),
+                Title = d.Model,
+                Detail = $"Disk {d.Number} · " + string.Join(" · ", tags),
+                Removable = d.Removable || d.Bus == "USB",
                 Open = () => new CachedDevice(new PhysicalDiskDevice(path)),
             };
             FillVolumes(item);
@@ -100,7 +125,7 @@ public partial class MainWindow : Window
             }
             if (found.Count == 0) found.Add(new NoteItem { Text = "No partitions found." });
         }
-        catch (UnauthorizedAccessException) { found.Add(new NoteItem { Text = "Administrator rights are needed to read this disk." }); }
+        catch (UnauthorizedAccessException) { found.Add(new NoteItem { Text = "Needs administrator rights to read." }); }
         catch (Exception ex) when (ex is IOException or InvalidDataException or ArgumentException) { found.Add(new NoteItem { Text = "Cannot read this disk: " + ex.Message }); }
         Application.Current.Dispatcher.Invoke(() =>
         {
@@ -127,7 +152,7 @@ public partial class MainWindow : Window
                     var fs = lv.Supported ? FsDetector.Detect(lv.Open(device)) : new DetectedFs("LVM volume", null, false, lv.Note);
                     var child = new VolumeItem
                     {
-                        Disk = item.Disk, Name = $"Volume {group.Name}/{lv.Name}", Size = lv.Size, Fs = fs,
+                        Disk = item.Disk, Name = $"{group.Name}/{lv.Name}", Size = lv.Size, Fs = fs,
                         Map = r => lv.Open(item.Map(r)),
                     };
                     Expand(child, root);
@@ -154,53 +179,6 @@ public partial class MainWindow : Window
             item.Children.Clear();
             foreach (var c in children) item.Children.Add(c);
         });
-    }
-
-    /// <summary>Asks for the password of an encrypted volume until it is right or the user gives up.</summary>
-    private async Task UnlockAsync(VolumeItem v)
-    {
-        string? error = null;
-        while (true)
-        {
-            var dialog = new PasswordDialog(this, v.Title, error);
-            if (dialog.ShowDialog() != true) { SetStatus("Ready"); return; }
-            string password = dialog.Password;
-            _busy = true;
-            Progress.Visibility = Visibility.Visible;
-            UpdateButtons();
-            SetStatus("Checking the password… this can take several seconds.");
-            try
-            {
-                await Task.Run(() =>
-                {
-                    using var root = v.Disk.Open();
-                    var key = LuksVolume.Open(v.Map(root)).Unlock(password);
-                    Application.Current.Dispatcher.Invoke(() => v.Key = key);
-                    Expand(v, root);
-                });
-                break;
-            }
-            catch (WrongPasswordException ex) { error = ex.Message; }
-            catch (Exception ex) when (IsExpected(ex)) { ShowError("This encrypted volume could not be unlocked: " + ex.Message); return; }
-            finally
-            {
-                _busy = false;
-                Progress.Visibility = Visibility.Collapsed;
-                UpdateButtons();
-                SetStatus("Ready");
-            }
-        }
-        var inside = v.Browsable().ToList();
-        if (inside.Count == 1) await OpenVolumeAsync(inside[0]);
-        else ShowContainerHint(v);
-    }
-
-    private void ShowContainerHint(VolumeItem v)
-    {
-        EmptyHint.Text = v.Browsable().Any()
-            ? "Choose one of the volumes listed under it on the left."
-            : "Nothing inside this volume can be read by this version.";
-        EmptyHint.Visibility = Visibility.Visible;
     }
 
     private DiskItem? AddImage(string path)
@@ -243,28 +221,21 @@ public partial class MainWindow : Window
         if (item == null) return;
         await RefreshDisksAsync();
         var first = item.Volumes.OfType<VolumeItem>().SelectMany(v => v.Browsable()).FirstOrDefault()
-            ?? item.Volumes.OfType<VolumeItem>().FirstOrDefault(v => v.IsLuks);
+            ?? item.Volumes.OfType<VolumeItem>().FirstOrDefault(v => v.IsLuks)
+            ?? item.Volumes.OfType<VolumeItem>().FirstOrDefault();
         if (first != null) await OpenVolumeAsync(first);
     }
 
     private void RestartAsAdmin_Click(object sender, RoutedEventArgs e)
     {
-        try
-        {
-            var psi = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas" };
-            foreach (var image in _imageItems) psi.ArgumentList.Add(image.ImagePath!);
-            Process.Start(psi);
-            Application.Current.Shutdown();
-        }
-        catch (Win32Exception) { /* the user said no at the Windows prompt */ }
+        if (App.RestartElevated(_imageItems.Select(i => i.ImagePath!))) Application.Current.Shutdown();
     }
 
     // -------------------------------------------------------------- volumes
 
     private async void DiskTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        // Deferred so the click finishes before a password prompt can open on top of it.
-        if (e.NewValue is VolumeItem v && v != _volume && !_busy)
+        if (e.NewValue is VolumeItem v && v != _current && !_busy)
             await Dispatcher.InvokeAsync(() => OpenVolumeAsync(v)).Task.Unwrap();
     }
 
@@ -273,41 +244,62 @@ public partial class MainWindow : Window
         _fs?.Dispose(); _fs = null;
         _device?.Dispose(); _device = null;
         _volume = null;
+        _unlockTarget = null;
         _trail = new();
+        _rows = new();
         _history.Clear();
+    }
+
+    /// <summary>Replaces the file list with a centred icon and message.</summary>
+    private void ShowMessage(string icon, string title, string text)
+    {
+        FileList.ItemsSource = null;
+        FileList.Visibility = Visibility.Collapsed;
+        UnlockPanel.Visibility = Visibility.Collapsed;
+        EmptyIcon.Text = icon; EmptyTitle.Text = title; EmptyText.Text = text;
+        EmptyPanel.Visibility = Visibility.Visible;
     }
 
     private async Task OpenVolumeAsync(VolumeItem v)
     {
         if (_busy) return;
+        ShowSettings(false);
         CloseVolume();
-        FileList.ItemsSource = null;
+        _current = v;
+        v.IsSelected = true;
         WarningBar.Visibility = Visibility.Collapsed;
-        PathBox.Text = "";
+        FilterBox.Text = "";
+        Breadcrumb.Children.Clear();
         UpdateButtons();
+        SetStatus("Ready");
 
-        if (v.IsLuks && v.Key == null) { await UnlockAsync(v); return; }
-        if (v.IsLuks || v.IsLvm) { ShowContainerHint(v); SetStatus("Ready"); return; }
+        if (v.IsLuks && v.Key == null) { ShowUnlock(v); return; }
+        if (v.IsLuks || v.IsLvm)
+        {
+            if (v.Browsable().Any()) ShowMessage("", v.IsLvm ? "LVM volume group" : "Unlocked", "Choose one of the volumes listed under it on the left.");
+            else ShowMessage("", "Nothing readable here", "None of the volumes inside can be read by this version.");
+            return;
+        }
         if (!v.Supported)
         {
-            EmptyHint.Text = v.Fs.Type == FsDetector.Unknown
-                ? "No known filesystem was found here."
-                : $"This contains {v.Fs.Type}, which this version cannot read ({v.Fs.Note ?? "not supported yet"}). It reads ext2, ext3, ext4, btrfs and xfs.";
-            EmptyHint.Visibility = Visibility.Visible;
-            SetStatus("Ready");
+            if (v.Fs.Type == FsDetector.Unknown) ShowMessage("", "No known filesystem", "Nothing recognisable was found here. It may be empty, or use a format this app does not know.");
+            else if (v.Fs.Type == "swap") ShowMessage("", "Linux swap space", "Swap is scratch memory for Linux. It holds no files.");
+            else ShowMessage("", $"{v.Fs.Type} cannot be read", $"{v.Fs.Note ?? "Not supported yet"}. This version reads ext2, ext3, ext4, btrfs and xfs.");
             return;
         }
 
-        SetStatus("Opening…");
+        ShowMessage("", "Opening…", v.Title);
+        LoadingBar.Visibility = Visibility.Visible;
         try
         {
             var (device, fs) = await Task.Run(() =>
             {
                 var dev = v.Disk.Open();
-                try { return (dev, FileSystems.Open(v.Map(dev))); }
+                try { return (dev, FileSystems.Open(v.Map(dev), new OpenOptions(Settings.Current.VerifyIntegrity))); }
                 catch { dev.Dispose(); throw; }
             });
             _device = device; _fs = fs; _volume = v;
+            _fsVerified = Settings.Current.VerifyIntegrity;
             if (fs.Warnings.Count > 0)
             {
                 WarningText.Text = string.Join("\n", fs.Warnings);
@@ -318,14 +310,149 @@ public partial class MainWindow : Window
         catch (Exception ex) when (IsExpected(ex))
         {
             CloseVolume();
-            EmptyHint.Text = "This partition could not be opened: " + ex.Message;
-            EmptyHint.Visibility = Visibility.Visible;
-            SetStatus("Ready");
+            ShowMessage("", "This could not be opened", ex.Message);
         }
+        finally { LoadingBar.Visibility = Visibility.Hidden; }
     }
 
     private static bool IsExpected(Exception ex) =>
         ex is IOException or InvalidDataException or NotSupportedException or UnauthorizedAccessException or ArgumentException;
+
+    // -------------------------------------------------------------- unlock
+
+    private void ShowUnlock(VolumeItem v)
+    {
+        _unlockTarget = v;
+        FileList.Visibility = Visibility.Collapsed;
+        EmptyPanel.Visibility = Visibility.Collapsed;
+        UnlockTitle.Text = $"{v.Title} is encrypted";
+        UnlockPassword.Clear();
+        UnlockError.Visibility = Visibility.Collapsed;
+        UnlockBusy.Visibility = Visibility.Collapsed;
+        UnlockPanel.Visibility = Visibility.Visible;
+        Dispatcher.InvokeAsync(() => UnlockPassword.Focus(), System.Windows.Threading.DispatcherPriority.Input);
+    }
+
+    private async void Unlock_Click(object sender, RoutedEventArgs e) => await UnlockAsync();
+
+    private async void UnlockPassword_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) { e.Handled = true; await UnlockAsync(); }
+    }
+
+    private async Task UnlockAsync()
+    {
+        var v = _unlockTarget;
+        if (v == null || _busy) return;
+        string password = UnlockPassword.Password;
+        _busy = true;
+        UnlockPassword.IsEnabled = UnlockButton.IsEnabled = false;
+        UnlockError.Visibility = Visibility.Collapsed;
+        UnlockBusy.Visibility = Visibility.Visible;
+        LoadingBar.Visibility = Visibility.Visible;
+        UpdateButtons();
+        bool unlocked = false;
+        try
+        {
+            await Task.Run(() =>
+            {
+                using var root = v.Disk.Open();
+                var key = LuksVolume.Open(v.Map(root)).Unlock(password);
+                Application.Current.Dispatcher.Invoke(() => v.Key = key);
+                Expand(v, root);
+            });
+            unlocked = true;
+        }
+        catch (WrongPasswordException) { ShowUnlockError("That password is not correct. Check Caps Lock and the keyboard layout, then try again."); }
+        catch (Exception ex) when (IsExpected(ex)) { ShowUnlockError(ex.Message); }
+        finally
+        {
+            _busy = false;
+            UnlockPassword.IsEnabled = UnlockButton.IsEnabled = true;
+            UnlockBusy.Visibility = Visibility.Collapsed;
+            LoadingBar.Visibility = Visibility.Hidden;
+            UpdateButtons();
+        }
+        if (!unlocked) { UnlockPassword.SelectAll(); UnlockPassword.Focus(); return; }
+
+        UnlockPassword.Clear();
+        var inside = v.Browsable().ToList();
+        await OpenVolumeAsync(inside.Count == 1 ? inside[0] : v);
+    }
+
+    private void ShowUnlockError(string text)
+    {
+        UnlockError.Text = text;
+        UnlockError.Visibility = Visibility.Visible;
+    }
+
+    // ------------------------------------------------------------- settings
+
+    private bool _loadingSettings;
+    private bool _fsVerified = true; // whether the open volume was opened with integrity checking
+
+    private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsView.Visibility != Visibility.Visible);
+
+    private async void SettingsDone_Click(object sender, RoutedEventArgs e)
+    {
+        ShowSettings(false);
+        // Integrity checking is fixed when a volume is opened, so reopen it if that changed.
+        if (_volume is { } v && _fsVerified != Settings.Current.VerifyIntegrity && !_busy) await OpenVolumeAsync(v);
+    }
+
+    private void ShowSettings(bool show)
+    {
+        if (show)
+        {
+            if (_busy) return;
+            var s = Settings.Current;
+            _loadingSettings = true;
+            ThemeBox.SelectedItem = ThemeBox.Items.Cast<ComboBoxItem>().FirstOrDefault(i => (string)i.Tag == s.Theme) ?? ThemeBox.Items[0];
+            HiddenBox.IsChecked = s.ShowHiddenFiles;
+            PermissionsBox.IsChecked = s.ShowPermissions;
+            ElevateBox.IsChecked = s.ElevateAtStartup;
+            WindowsDiskBox.IsChecked = s.ShowWindowsDisk;
+            VerifyBox.IsChecked = s.VerifyIntegrity;
+            DoubleClickBox.IsChecked = s.DoubleClickOpens;
+            DatesBox.IsChecked = s.KeepDates;
+            OpenFolderBox.IsChecked = s.OfferOpenFolder;
+            _loadingSettings = false;
+        }
+        SettingsView.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        BrowserView.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>Any control on the settings page changed: store everything and apply what can change live.</summary>
+    private async void Setting_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_loadingSettings || !IsLoaded) return;
+        var s = Settings.Current;
+        bool disksChanged = s.ShowWindowsDisk != (WindowsDiskBox.IsChecked == true);
+        s.Theme = (ThemeBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "System";
+        s.ShowHiddenFiles = HiddenBox.IsChecked == true;
+        s.ShowPermissions = PermissionsBox.IsChecked == true;
+        s.ElevateAtStartup = ElevateBox.IsChecked == true;
+        s.ShowWindowsDisk = WindowsDiskBox.IsChecked == true;
+        s.VerifyIntegrity = VerifyBox.IsChecked == true;
+        s.DoubleClickOpens = DoubleClickBox.IsChecked == true;
+        s.KeepDates = DatesBox.IsChecked == true;
+        s.OfferOpenFolder = OpenFolderBox.IsChecked == true;
+        s.Save();
+
+        ((App)Application.Current).ApplyTheme(Environment.GetEnvironmentVariable("LDR_THEME") ?? s.Theme);
+        ApplyColumnSetting();
+        if (_fs != null) { ApplyView(); SetStatus(StatusForFolder()); }
+        if (disksChanged) await RefreshDisksAsync();
+    }
+
+    private void ApplyColumnSetting()
+    {
+        if (FileList.View is not GridView view) return;
+        bool want = Settings.Current.ShowPermissions, have = view.Columns.Contains(PermissionsColumn);
+        if (want && !have) view.Columns.Add(PermissionsColumn);
+        else if (!want && have) view.Columns.Remove(PermissionsColumn);
+        FileList_SizeChanged(this, null!);
+    }
 
     // ----------------------------------------------------------- navigation
 
@@ -336,30 +463,63 @@ public partial class MainWindow : Window
         var fs = _fs;
         if (fs == null) return;
         int version = ++_loadVersion;
-        SetStatus("Reading folder…");
+        LoadingBar.Visibility = Visibility.Visible;
         IReadOnlyList<FsNode> entries;
         try { entries = await Task.Run(() => fs.ListDirectory(trail[^1])); }
         catch (Exception ex) when (IsExpected(ex))
         {
-            if (version == _loadVersion) { ShowError("This folder could not be read: " + ex.Message); SetStatus(StatusForFolder()); }
+            if (version == _loadVersion)
+            {
+                LoadingBar.Visibility = Visibility.Hidden;
+                if (_trail.Count == 0) ShowMessage("", "This folder could not be read", ex.Message);
+                else ShowError("This folder could not be read: " + ex.Message);
+            }
             return;
         }
         if (version != _loadVersion || fs != _fs) return;
+        LoadingBar.Visibility = Visibility.Hidden;
 
         if (remember && _trail.Count > 0) _history.Push(_trail);
         _trail = trail;
         _rows = entries.Select(n => new EntryRow(n)).ToList();
-        ApplySort();
-        PathBox.Text = CurrentPath;
-        EmptyHint.Text = "This folder is empty.";
-        EmptyHint.Visibility = _rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (FilterBox.Text.Length > 0) FilterBox.Text = ""; // also re-applies the list
+        else ApplyView();
+        BuildBreadcrumb();
         UpdateButtons();
         SetStatus(StatusForFolder());
+        FileList.Focus();
     }
 
-    private List<EntryRow> _rows = new();
+    /// <summary>The clickable path: one button per folder from the top of the volume down to here.</summary>
+    private void BuildBreadcrumb()
+    {
+        Breadcrumb.Children.Clear();
+        for (int i = 0; i < _trail.Count; i++)
+        {
+            if (i > 0)
+                Breadcrumb.Children.Add(new TextBlock
+                {
+                    Text = "", FontFamily = (System.Windows.Media.FontFamily)FindResource("Icons"), FontSize = 9,
+                    VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 1, 2, 0), Opacity = 0.6,
+                });
+            string label = i == 0 ? (_fs is { Label.Length: > 0 } f ? f.Label : _volume?.Name ?? "/") : _trail[i].Name;
+            var prefix = _trail.Take(i + 1).ToList();
+            bool current = i == _trail.Count - 1;
+            var button = new Button
+            {
+                Content = label, Padding = new Thickness(7, 4, 7, 4), Margin = new Thickness(0),
+                Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0),
+                FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal,
+                ToolTip = i == 0 ? "Top of this volume" : null,
+            };
+            if (!current) button.Click += async (_, _) => { if (!_busy) await NavigateAsync(prefix); };
+            Breadcrumb.Children.Add(button);
+        }
+        BreadcrumbScroll.ScrollToRightEnd();
+    }
 
-    private void ApplySort()
+    /// <summary>Applies the filter text and the sort order to the current folder.</summary>
+    private void ApplyView()
     {
         Func<EntryRow, IComparable> key = _sortColumn switch
         {
@@ -369,29 +529,75 @@ public partial class MainWindow : Window
             "Permissions" => r => r.Permissions,
             _ => r => r.Name.ToLowerInvariant(),
         };
-        var folders = _rows.Where(r => r.Node.Kind == FsNodeKind.Directory);
-        var others = _rows.Where(r => r.Node.Kind != FsNodeKind.Directory);
+        string filter = FilterBox.Text.Trim();
+        var shown = Settings.Current.ShowHiddenFiles ? _rows : _rows.Where(r => !r.Name.StartsWith('.')).ToList();
+        var visible = filter.Length == 0 ? shown : shown.Where(r => r.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
         IEnumerable<EntryRow> Order(IEnumerable<EntryRow> rows) =>
             _sortDescending ? rows.OrderByDescending(key).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
                             : rows.OrderBy(key).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase);
-        FileList.ItemsSource = Order(folders).Concat(Order(others)).ToList();
+        var list = Order(visible.Where(r => r.Node.Kind == FsNodeKind.Directory)).Concat(Order(visible.Where(r => r.Node.Kind != FsNodeKind.Directory))).ToList();
+
+        if (_fs == null) return;
+        if (list.Count == 0)
+        {
+            if (_rows.Count == 0) ShowMessage("", "This folder is empty", "");
+            else if (shown.Count == 0) ShowMessage("", "Only hidden files here", "This folder holds only hidden items. Turn on 'Show hidden files' in Settings to see them.");
+            else ShowMessage("", "No matches", $"Nothing in this folder has \"{filter}\" in its name.");
+            return;
+        }
+        EmptyPanel.Visibility = UnlockPanel.Visibility = Visibility.Collapsed;
+        FileList.Visibility = Visibility.Visible;
+        FileList.ItemsSource = list;
+    }
+
+    private void FilterBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        FilterHint.Visibility = FilterBox.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (_fs == null) return;
+        ApplyView();
+        SetStatus(StatusForFolder());
+    }
+
+    /// <summary>Lets the Name column take whatever width the other columns leave.</summary>
+    private void FileList_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (FileList.View is not GridView view) return;
+        double others = view.Columns.Where(c => c != NameColumn).Sum(c => c.ActualWidth);
+        NameColumn.Width = Math.Max(180, FileList.ActualWidth - others - 34);
     }
 
     private void FileList_HeaderClick(object sender, RoutedEventArgs e)
     {
-        if (e.OriginalSource is not GridViewColumnHeader { Column.Header: string header }) return;
-        if (_sortColumn == header) _sortDescending = !_sortDescending;
-        else { _sortColumn = header; _sortDescending = false; }
-        ApplySort();
+        if (e.OriginalSource is not GridViewColumnHeader { Column: { } column } || FileList.View is not GridView view) return;
+        string name = ((string)column.Header).TrimEnd(' ', '▲', '▼');
+        if (_sortColumn == name) _sortDescending = !_sortDescending;
+        else { _sortColumn = name; _sortDescending = false; }
+        foreach (var c in view.Columns)
+        {
+            string plain = ((string)c.Header).TrimEnd(' ', '▲', '▼');
+            c.Header = plain == _sortColumn ? plain + (_sortDescending ? "  ▼" : "  ▲") : plain;
+        }
+        ApplyView();
     }
 
     private string StatusForFolder()
     {
         if (_fs == null) return "Ready";
-        int selected = FileList.SelectedItems.Count;
-        string items = _rows.Count == 1 ? "1 item" : $"{_rows.Count} items";
-        string label = _fs.Label.Length > 0 ? $" \"{_fs.Label}\"" : "";
-        return selected > 0 ? $"{items}, {selected} selected — {_fs.TypeName}{label}, read-only" : $"{items} — {_fs.TypeName}{label}, read-only";
+        string volume = $"{_fs.TypeName} · read-only";
+        var selected = FileList.SelectedItems.Cast<EntryRow>().ToList();
+        if (selected.Count > 0)
+        {
+            long bytes = selected.Where(r => r.Node.Kind == FsNodeKind.File).Sum(r => r.Node.Size);
+            bool folders = selected.Any(r => r.Node.Kind == FsNodeKind.Directory);
+            string size = bytes > 0 || !folders ? $" · {Format.Size(bytes)}{(folders ? " plus folders" : "")}" : "";
+            return $"{selected.Count} selected{size}   —   {volume}";
+        }
+        int hidden = Settings.Current.ShowHiddenFiles ? 0 : _rows.Count(r => r.Name.StartsWith('.'));
+        int total = _rows.Count - hidden, shown = FileList.Visibility == Visibility.Visible ? FileList.Items.Count : 0;
+        string items = total == 1 ? "1 item" : $"{total} items";
+        if (FilterBox.Text.Trim().Length > 0) items = $"{shown} of {items}";
+        if (hidden > 0) items += $" ({hidden} hidden)";
+        return $"{items}   —   {volume}";
     }
 
     private void UpdateButtons()
@@ -399,7 +605,9 @@ public partial class MainWindow : Window
         UpButton.IsEnabled = !_busy && _trail.Count > 1;
         BackButton.IsEnabled = !_busy && _history.Count > 0;
         SaveButton.IsEnabled = !_busy && _fs != null && _rows.Count > 0;
-        SaveButton.Content = FileList.SelectedItems.Count > 0 ? "Copy selected to Windows…" : "Copy this folder to Windows…";
+        FilterBox.IsEnabled = !_busy && _fs != null;
+        int selected = FileList.SelectedItems.Count;
+        SaveButtonText.Text = selected == 0 ? "Copy this folder to Windows" : selected == 1 ? "Copy to Windows" : $"Copy {selected} items to Windows";
         DiskTree.IsEnabled = !_busy;
     }
 
@@ -421,8 +629,9 @@ public partial class MainWindow : Window
 
     private async void FileList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (e.OriginalSource is DependencyObject d && ItemsControl.ContainerFromElement(FileList, d) is ListViewItem { Content: EntryRow row })
-            await ActivateAsync(row);
+        if (e.OriginalSource is not DependencyObject d || ItemsControl.ContainerFromElement(FileList, d) is not ListViewItem { Content: EntryRow row }) return;
+        if (row.Node.Kind == FsNodeKind.File && !Settings.Current.DoubleClickOpens) return;
+        await ActivateAsync(row);
     }
 
     private async void FileList_KeyDown(object sender, KeyEventArgs e)
@@ -431,9 +640,29 @@ public partial class MainWindow : Window
         else if (e.Key == Key.Back) { e.Handled = true; Up_Click(sender, e); }
     }
 
+    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        var mods = Keyboard.Modifiers;
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (mods == ModifierKeys.Alt && key == Key.Left) { e.Handled = true; Back_Click(sender, e); }
+        else if (mods == ModifierKeys.Alt && key == Key.Up) { e.Handled = true; Up_Click(sender, e); }
+        else if (mods == ModifierKeys.Control && key == Key.F && FilterBox.IsEnabled) { e.Handled = true; FilterBox.Focus(); FilterBox.SelectAll(); }
+        else if (mods == ModifierKeys.Control && key == Key.O) { e.Handled = true; OpenImage_Click(sender, e); }
+        else if (mods == ModifierKeys.None && key == Key.F5) { e.Handled = true; if (!_busy) await RefreshDisksAsync(); }
+        else if (mods == ModifierKeys.None && key == Key.Escape && FilterBox.IsKeyboardFocusWithin) { e.Handled = true; FilterBox.Text = ""; FileList.Focus(); }
+    }
+
     private async void OpenSelected_Click(object sender, RoutedEventArgs e)
     {
         if (FileList.SelectedItem is EntryRow row) await ActivateAsync(row);
+    }
+
+    private void CopyPath_Click(object sender, RoutedEventArgs e)
+    {
+        var paths = FileList.SelectedItems.Cast<EntryRow>().Select(r => CurrentPath.TrimEnd('/') + "/" + r.Name).ToList();
+        if (paths.Count == 0) return;
+        try { Clipboard.SetText(string.Join(Environment.NewLine, paths)); }
+        catch (System.Runtime.InteropServices.COMException) { /* clipboard busy */ }
     }
 
     private async Task ActivateAsync(EntryRow row)
@@ -452,7 +681,7 @@ public partial class MainWindow : Window
                 List<FsNode>? target;
                 try { target = await Task.Run(() => FsPath.Resolve(fs, trail, node.LinkTarget)); }
                 catch (Exception ex) when (IsExpected(ex)) { ShowError(ex.Message); break; }
-                if (target == null) ShowError($"This link points to \"{node.LinkTarget}\", which does not exist on this partition.");
+                if (target == null) ShowError($"This link points to \"{node.LinkTarget}\", which does not exist on this volume.");
                 else if (target[^1].Kind == FsNodeKind.Directory) await NavigateAsync(target);
                 else if (target[^1].Kind == FsNodeKind.File) await OpenFileAsync(target[^1]);
                 break;
@@ -471,8 +700,9 @@ public partial class MainWindow : Window
     private async Task OpenFileAsync(FsNode node)
     {
         string folder = Path.Combine(Path.GetTempPath(), "LinuxDriveReader", Guid.NewGuid().ToString("N"));
-        var result = await RunExportAsync(new[] { node }, folder);
-        if (result == null || result.Files != 1) return;
+        var result = await RunExportAsync(new[] { node }, folder, "Opening");
+        if (result == null) return;
+        if (result.Files != 1) { ShowError("This file could not be read: " + (result.Errors.FirstOrDefault() ?? "unknown error")); return; }
         string file = Directory.GetFiles(folder).First();
         try { Process.Start(new ProcessStartInfo(file) { UseShellExecute = true }); }
         catch (Win32Exception ex) { ShowError("Windows could not open this file: " + ex.Message); }
@@ -488,7 +718,7 @@ public partial class MainWindow : Window
 
         var dlg = new OpenFolderDialog { Title = "Choose where to copy the files" };
         if (dlg.ShowDialog(this) != true) return;
-        var result = await RunExportAsync(nodes, dlg.FolderName);
+        var result = await RunExportAsync(nodes, dlg.FolderName, "Copying", Settings.Current.KeepDates);
         if (result == null) return;
 
         var lines = new List<string> { $"Copied {result.Files} file(s) in {result.Folders} folder(s), {Format.Size(result.Bytes)}." };
@@ -498,8 +728,15 @@ public partial class MainWindow : Window
             lines.Add($"\n{result.Skipped.Count} item(s) were not copied because they are links or special files:\n" + Sample(result.Skipped));
         if (result.Errors.Count > 0)
             lines.Add($"\n{result.Errors.Count} item(s) FAILED to copy:\n" + Sample(result.Errors));
-        MessageBox.Show(this, string.Join("\n", lines), "Copy finished", MessageBoxButton.OK,
-            result.Errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        bool offer = Settings.Current.OfferOpenFolder;
+        if (offer) lines.Add("\nOpen the folder now?");
+        var answer = MessageBox.Show(this, string.Join("\n", lines), result.Errors.Count > 0 ? "Copy finished with problems" : "Copy finished",
+            offer ? MessageBoxButton.YesNo : MessageBoxButton.OK, result.Errors.Count > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+        if (answer == MessageBoxResult.Yes)
+        {
+            try { Process.Start(new ProcessStartInfo(dlg.FolderName) { UseShellExecute = true }); }
+            catch (Win32Exception) { }
+        }
     }
 
     private static string Sample(IEnumerable<string> items)
@@ -509,7 +746,7 @@ public partial class MainWindow : Window
         return list.Count > 8 ? text + $"\n  …and {list.Count - 8} more" : text;
     }
 
-    private async Task<ExportResult?> RunExportAsync(IReadOnlyList<FsNode> nodes, string destination)
+    private async Task<ExportResult?> RunExportAsync(IReadOnlyList<FsNode> nodes, string destination, string verb, bool keepDates = true)
     {
         var fs = _fs;
         if (fs == null || _busy) return null;
@@ -517,20 +754,23 @@ public partial class MainWindow : Window
         _cts = new CancellationTokenSource();
         Progress.Visibility = CancelButton.Visibility = Visibility.Visible;
         UpdateButtons();
+        SetStatus($"{verb}…");
         var lastReport = Stopwatch.StartNew();
+        var started = Stopwatch.StartNew();
         var progress = new Progress<ExportProgress>(p =>
         {
-            if (lastReport.ElapsedMilliseconds < 100 || !_busy) return;
+            if (lastReport.ElapsedMilliseconds < 120 || !_busy) return;
             lastReport.Restart();
-            SetStatus($"Copying {p.CurrentPath} — {p.FilesCopied} file(s), {Format.Size(p.BytesCopied)}");
+            double seconds = Math.Max(started.Elapsed.TotalSeconds, 0.5);
+            SetStatus($"{verb} {p.CurrentPath}   —   {p.FilesCopied} file(s), {Format.Size(p.BytesCopied)}, {Format.Size((long)(p.BytesCopied / seconds))}/s");
         });
         try
         {
             var token = _cts.Token;
-            return await Task.Run(() => Exporter.Export(fs, nodes, destination, progress, token));
+            return await Task.Run(() => Exporter.Export(fs, nodes, destination, progress, token, keepDates));
         }
-        catch (OperationCanceledException) { MessageBox.Show(this, "Copy cancelled. Files already copied were kept.", "Linux Drive Reader"); return null; }
-        catch (Exception ex) when (IsExpected(ex)) { ShowError("Copy failed: " + ex.Message); return null; }
+        catch (OperationCanceledException) { MessageBox.Show(this, "Cancelled. Files already copied were kept.", "Linux Drive Reader"); return null; }
+        catch (Exception ex) when (IsExpected(ex)) { ShowError($"{verb} failed: {ex.Message}"); return null; }
         finally
         {
             _busy = false;

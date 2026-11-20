@@ -19,19 +19,19 @@ public sealed class ExportResult
 public static class Exporter
 {
     public static ExportResult Export(IFileSystem fs, IReadOnlyList<FsNode> nodes, string destination,
-        IProgress<ExportProgress>? progress = null, CancellationToken ct = default)
+        IProgress<ExportProgress>? progress = null, CancellationToken ct = default, bool preserveTimes = true)
     {
         Directory.CreateDirectory(destination);
         var result = new ExportResult();
         // Never overwrite what is already in the destination folder.
         var used = new HashSet<string>(Directory.EnumerateFileSystemEntries(destination).Select(p => Path.GetFileName(p)!), StringComparer.OrdinalIgnoreCase);
         var buffer = new byte[1024 * 1024];
-        foreach (var node in nodes) ExportNode(fs, node, destination, "/" + node.Name, used, result, buffer, progress, ct, 0);
+        foreach (var node in nodes) ExportNode(fs, node, destination, "/" + node.Name, used, result, buffer, progress, ct, 0, preserveTimes);
         return result;
     }
 
     private static void ExportNode(IFileSystem fs, FsNode node, string destDir, string linuxPath, HashSet<string> used,
-        ExportResult result, byte[] buffer, IProgress<ExportProgress>? progress, CancellationToken ct, int depth)
+        ExportResult result, byte[] buffer, IProgress<ExportProgress>? progress, CancellationToken ct, int depth, bool preserveTimes)
     {
         ct.ThrowIfCancellationRequested();
         if (node.Kind == FsNodeKind.Symlink) { result.Skipped.Add($"{linuxPath} (link to {node.LinkTarget ?? "?"})"); return; }
@@ -54,8 +54,8 @@ public static class Exporter
             result.Folders++;
             var childNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var child in children)
-                ExportNode(fs, child, target, linuxPath + "/" + child.Name, childNames, result, buffer, progress, ct, depth + 1);
-            TrySetTime(() => Directory.SetLastWriteTimeUtc(target, node.ModifiedUtc!.Value), node);
+                ExportNode(fs, child, target, linuxPath + "/" + child.Name, childNames, result, buffer, progress, ct, depth + 1, preserveTimes);
+            if (preserveTimes) TrySetTime(() => Directory.SetLastWriteTimeUtc(target, node.ModifiedUtc!.Value), node);
             return;
         }
 
@@ -73,7 +73,7 @@ public static class Exporter
                     progress?.Report(new ExportProgress(linuxPath, result.Bytes, result.Files));
                 }
             }
-            TrySetTime(() => File.SetLastWriteTimeUtc(target, node.ModifiedUtc!.Value), node);
+            if (preserveTimes) TrySetTime(() => File.SetLastWriteTimeUtc(target, node.ModifiedUtc!.Value), node);
             result.Files++;
             progress?.Report(new ExportProgress(linuxPath, result.Bytes, result.Files));
         }

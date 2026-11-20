@@ -8,6 +8,10 @@ Version 1 is a read-only file browser: pick a partition, browse it, copy files o
 - **Sources:** physical disks (needs administrator rights) and disk image files (no special rights).
 - **Partition tables:** GPT, MBR (including logical partitions), or none.
 
+## Settings
+
+The gear button at the bottom of the disk list opens a settings page: theme, hidden files, the Permissions column, asking for administrator rights at startup, hiding the Windows disk, btrfs integrity checking, keeping file dates, and two copy/open behaviours. Settings are stored in `%LOCALAPPDATA%\LinuxDriveReader\settings.json`.
+
 ## Layout
 
 - `src/LinuxFs.Core` – disk access, partition tables, filesystem detection, the filesystem readers (`Ext`, `Btrfs`, `Xfs`), containers (`Containers`: LUKS, LVM), crypto written for them (`Crypto`), export to Windows.

@@ -70,14 +70,18 @@ public interface IFileSystem : IDisposable
     Stream OpenFile(FsNode file);
 }
 
+/// <param name="VerifyChecksums">Check file contents against stored checksums where the filesystem has them (btrfs).</param>
+public sealed record OpenOptions(bool VerifyChecksums = true);
+
 public static class FileSystems
 {
     /// <summary>Opens the filesystem on a volume, or throws NotSupportedException.</summary>
-    public static IFileSystem Open(IBlockDevice volume)
+    public static IFileSystem Open(IBlockDevice volume, OpenOptions? options = null)
     {
+        options ??= new OpenOptions();
         var detected = FsDetector.Detect(volume);
         if (detected.Type is "ext2" or "ext3" or "ext4") return new ExtFileSystem(volume);
-        if (detected.Type == "btrfs") return new BtrfsFileSystem(volume);
+        if (detected.Type == "btrfs") return new BtrfsFileSystem(volume, options.VerifyChecksums);
         if (detected.Type == "xfs") return new XfsFileSystem(volume);
         throw new NotSupportedException(detected.Type == FsDetector.Unknown
             ? "No known filesystem was found on this volume."

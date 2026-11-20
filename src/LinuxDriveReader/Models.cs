@@ -12,6 +12,9 @@ public sealed class DiskItem
     public required string Detail { get; init; }
     public required Func<IBlockDevice> Open { get; init; }
     public string? ImagePath { get; init; }
+    public bool Removable { get; init; }
+    public bool IsSelected { get; set; }
+    public string Icon => ImagePath != null ? "" : Removable ? "" : "";
     public ObservableCollection<object> Volumes { get; } = new();
 }
 
@@ -37,7 +40,15 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
     public LinuxFs.Core.Containers.LuksKey? Key
     {
         get => _key;
-        set { _key = value; PropertyChanged?.Invoke(this, new(nameof(Detail))); }
+        set { _key = value; PropertyChanged?.Invoke(this, new(nameof(Detail))); PropertyChanged?.Invoke(this, new(nameof(Icon))); }
+    }
+
+    private bool _selected;
+    /// <summary>Mirrors the highlight in the disk list, so the app can highlight what it opened itself.</summary>
+    public bool IsSelected
+    {
+        get => _selected;
+        set { if (_selected != value) { _selected = value; PropertyChanged?.Invoke(this, new(nameof(IsSelected))); } }
     }
 
     public bool IsLuks => Fs.Type == "LUKS";
@@ -45,6 +56,8 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
     /// <summary>A filesystem this app can browse.</summary>
     public bool Supported => Fs.Supported;
     public double Opacity => Supported || IsLuks || IsLvm ? 1.0 : 0.55;
+    public string Icon => IsLuks ? (Key == null ? "" : "") : IsLvm ? "" : Supported ? "" : "";
+    public Brush IconBrush => IsLuks ? EntryRow.Accent : Supported ? EntryRow.FolderBrush : EntryRow.FileBrush;
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     public string Title
@@ -78,12 +91,13 @@ public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
 public sealed class NoteItem
 {
     public required string Text { get; init; }
+    public bool IsSelected { get; set; }
 }
 
 /// <summary>One row of the file list.</summary>
 public sealed class EntryRow
 {
-    private static readonly Brush FolderBrush = Frozen(0xE0, 0xA8, 0x00), FileBrush = Frozen(0x60, 0x60, 0x60), LinkBrush = Frozen(0x1E, 0x6F, 0xC8);
+    internal static readonly Brush FolderBrush = Frozen(0xE6, 0xA8, 0x17), FileBrush = Frozen(0x8A, 0x8A, 0x8A), LinkBrush = Frozen(0x3B, 0x8E, 0xEA), Accent = Frozen(0x3B, 0x8E, 0xEA);
     private static Brush Frozen(byte r, byte g, byte b) { var br = new SolidColorBrush(Color.FromRgb(r, g, b)); br.Freeze(); return br; }
 
     public EntryRow(FsNode node) => Node = node;

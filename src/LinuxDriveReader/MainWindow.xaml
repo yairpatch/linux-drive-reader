@@ -2,116 +2,351 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:LinuxDriveReader"
-        Title="Linux Drive Reader" Height="700" Width="1150" MinHeight="400" MinWidth="700"
-        AllowDrop="True" Drop="Window_Drop">
-    <DockPanel>
-        <Border x:Name="AdminBanner" DockPanel.Dock="Top" Background="#FFF4CE" BorderBrush="#E5D18A" BorderThickness="0,0,0,1" Padding="10,6">
+        Title="Linux Drive Reader" Height="720" Width="1180" MinHeight="460" MinWidth="820"
+        AllowDrop="True" Drop="Window_Drop" PreviewKeyDown="Window_PreviewKeyDown">
+    <Window.Resources>
+        <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="FontFamily" Value="{StaticResource Icons}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Padding" Value="9,7"/>
+            <Setter Property="Margin" Value="0,0,4,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style x:Key="SettingCard" TargetType="Border">
+            <Setter Property="Padding" Value="16,12"/>
+            <Setter Property="Margin" Value="0,0,0,5"/>
+            <Setter Property="CornerRadius" Value="6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Background" Value="{DynamicResource CardBackgroundFillColorDefaultBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource CardStrokeColorDefaultBrush}"/>
+        </Style>
+        <Style x:Key="SettingSection" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="2,18,0,8"/>
+        </Style>
+        <Style x:Key="SettingToggle" TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="DockPanel.Dock" Value="Right"/>
+            <Setter Property="MinWidth" Value="0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="16,0,0,0"/>
+        </Style>
+        <Style x:Key="Secondary" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource TextFillColorSecondaryBrush}"/>
+            <Setter Property="FontSize" Value="12"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- administrator notice -->
+        <Border x:Name="AdminBar" Grid.Row="0" Margin="12,10,12,0" Padding="14,9" CornerRadius="6"
+                Background="{DynamicResource SystemFillColorCautionBackgroundBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1">
             <DockPanel>
-                <Button DockPanel.Dock="Right" Click="RestartAsAdmin_Click" Content="Restart as administrator" Margin="10,0,0,0"/>
+                <Button DockPanel.Dock="Right" Click="RestartAsAdmin_Click" Content="Restart as administrator" Margin="12,0,0,0"
+                        AutomationProperties.AutomationId="RestartAsAdmin"/>
+                <TextBlock DockPanel.Dock="Left" Text="&#xE7BA;" FontFamily="{StaticResource Icons}" FontSize="16" VerticalAlignment="Center" Margin="0,0,10,0"
+                           Foreground="{DynamicResource SystemFillColorCautionBrush}"/>
                 <TextBlock VerticalAlignment="Center" TextWrapping="Wrap"
-                           Text="Windows only lets administrators read disks directly. Restart as administrator to read your Linux disks. Disk image files work without it."/>
+                           Text="Windows only lets administrators read disks directly. Restart as administrator to see what is on your disks. Disk image files work without it."/>
             </DockPanel>
         </Border>
 
-        <Border DockPanel.Dock="Top" Padding="8,6" BorderBrush="#DDD" BorderThickness="0,0,0,1">
-            <StackPanel Orientation="Horizontal">
-                <Button Content="Refresh disks" Click="Refresh_Click"/>
-                <Button Content="Open disk image…" Click="OpenImage_Click"/>
-            </StackPanel>
-        </Border>
-
-        <Border DockPanel.Dock="Bottom" Padding="8,5" BorderBrush="#DDD" BorderThickness="0,1,0,0" Background="#F7F7F7">
-            <DockPanel>
-                <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" Margin="8,0,0,0"/>
-                <ProgressBar x:Name="Progress" DockPanel.Dock="Right" Width="140" Height="14" IsIndeterminate="True" Visibility="Collapsed"/>
-                <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="Ready"/>
-            </DockPanel>
-        </Border>
-
-        <Grid>
+        <Grid Grid.Row="1" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="340" MinWidth="200"/>
-                <ColumnDefinition Width="5"/>
-                <ColumnDefinition Width="*" MinWidth="300"/>
+                <ColumnDefinition x:Name="SidebarColumn" Width="330" MinWidth="220" MaxWidth="600"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="*" MinWidth="360"/>
             </Grid.ColumnDefinitions>
 
-            <TreeView x:Name="DiskTree" Grid.Column="0" BorderThickness="0" SelectedItemChanged="DiskTree_SelectedItemChanged" Padding="4">
-                <TreeView.ItemContainerStyle>
-                    <Style TargetType="TreeViewItem">
-                        <Setter Property="IsExpanded" Value="True"/>
-                        <Setter Property="Padding" Value="2,3"/>
-                    </Style>
-                </TreeView.ItemContainerStyle>
-                <TreeView.Resources>
-                    <HierarchicalDataTemplate DataType="{x:Type local:DiskItem}" ItemsSource="{Binding Volumes}">
-                        <StackPanel Margin="0,2">
-                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold"/>
-                            <TextBlock Text="{Binding Detail}" Foreground="#666" FontSize="11"/>
-                        </StackPanel>
-                    </HierarchicalDataTemplate>
-                    <HierarchicalDataTemplate DataType="{x:Type local:VolumeItem}" ItemsSource="{Binding Children}">
-                        <StackPanel Margin="0,1" Opacity="{Binding Opacity}">
-                            <TextBlock Text="{Binding Title}"/>
-                            <TextBlock Text="{Binding Detail}" Foreground="#666" FontSize="11"/>
-                        </StackPanel>
-                    </HierarchicalDataTemplate>
-                    <DataTemplate DataType="{x:Type local:NoteItem}">
-                        <TextBlock Text="{Binding Text}" Foreground="#A05A00" TextWrapping="Wrap" MaxWidth="260" FontSize="11"/>
-                    </DataTemplate>
-                </TreeView.Resources>
-            </TreeView>
-
-            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="#E5E5E5"/>
-
-            <DockPanel Grid.Column="2">
-                <Border DockPanel.Dock="Top" Padding="8,6" BorderBrush="#DDD" BorderThickness="0,0,0,1">
-                    <DockPanel>
-                        <Button x:Name="BackButton" DockPanel.Dock="Left" Content="← Back" Click="Back_Click" IsEnabled="False"/>
-                        <Button x:Name="UpButton" DockPanel.Dock="Left" Content="↑ Up" Click="Up_Click" IsEnabled="False"/>
-                        <Button x:Name="SaveButton" DockPanel.Dock="Right" Content="Copy to Windows…" Click="Save_Click" IsEnabled="False" Margin="6,0,0,0"/>
-                        <TextBox x:Name="PathBox" IsReadOnly="True" VerticalContentAlignment="Center" Padding="4,2" Background="#FAFAFA"/>
-                    </DockPanel>
-                </Border>
-                <Border x:Name="WarningBar" DockPanel.Dock="Top" Background="#FDE7E9" Padding="10,6" Visibility="Collapsed">
-                    <TextBlock x:Name="WarningText" TextWrapping="Wrap"/>
-                </Border>
-                <Grid>
-                    <ListView x:Name="FileList" BorderThickness="0" MouseDoubleClick="FileList_MouseDoubleClick"
-                              KeyDown="FileList_KeyDown" SelectionChanged="FileList_SelectionChanged"
-                              GridViewColumnHeader.Click="FileList_HeaderClick">
-                        <ListView.ContextMenu>
-                            <ContextMenu>
-                                <MenuItem Header="Open" Click="OpenSelected_Click"/>
-                                <MenuItem Header="Copy to Windows…" Click="Save_Click"/>
-                            </ContextMenu>
-                        </ListView.ContextMenu>
-                        <ListView.View>
-                            <GridView>
-                                <GridViewColumn Header="Name" Width="330">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="{Binding Icon}" FontFamily="Segoe MDL2 Assets" Foreground="{Binding IconBrush}" Margin="0,2,7,0" VerticalAlignment="Center"/>
-                                                <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Size" Width="90">
-                                    <GridViewColumn.CellTemplate>
-                                        <DataTemplate><TextBlock Text="{Binding SizeText}" TextAlignment="Right" Width="76"/></DataTemplate>
-                                    </GridViewColumn.CellTemplate>
-                                </GridViewColumn>
-                                <GridViewColumn Header="Modified" Width="140" DisplayMemberBinding="{Binding ModifiedText}"/>
-                                <GridViewColumn Header="Type" Width="110" DisplayMemberBinding="{Binding TypeText}"/>
-                                <GridViewColumn Header="Permissions" Width="95" DisplayMemberBinding="{Binding Permissions}"/>
-                            </GridView>
-                        </ListView.View>
-                    </ListView>
-                    <TextBlock x:Name="EmptyHint" Text="Choose a Linux partition on the left, or open a disk image file."
-                               Foreground="#777" HorizontalAlignment="Center" VerticalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="360"/>
-                </Grid>
+            <!-- disks -->
+            <DockPanel Grid.Column="0" Margin="12,0,0,0">
+                <DockPanel DockPanel.Dock="Top" Margin="4,0,0,6">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE8E5;" Click="OpenImage_Click"
+                            ToolTip="Open a disk image file (Ctrl+O)" AutomationProperties.Name="Open disk image" Margin="0"/>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="&#xE72C;" Click="Refresh_Click"
+                            ToolTip="Look for disks again (F5)" AutomationProperties.Name="Refresh disks"/>
+                    <TextBlock Text="Disks" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </DockPanel>
+                <Button x:Name="SettingsButton" DockPanel.Dock="Bottom" Click="Settings_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                        Background="Transparent" BorderThickness="0" Padding="10,8" Margin="0,6,0,0" ToolTip="Change how the app looks and behaves"
+                        AutomationProperties.AutomationId="SettingsButton">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE713;" FontFamily="{StaticResource Icons}" FontSize="16" VerticalAlignment="Center" Margin="0,1,12,0"/>
+                        <TextBlock Text="Settings"/>
+                    </StackPanel>
+                </Button>
+                <TreeView x:Name="DiskTree" BorderThickness="0" Background="Transparent" SelectedItemChanged="DiskTree_SelectedItemChanged"
+                          AutomationProperties.AutomationId="DiskTree" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                            <Setter Property="IsExpanded" Value="True"/>
+                            <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+                    <TreeView.Resources>
+                        <HierarchicalDataTemplate DataType="{x:Type local:DiskItem}" ItemsSource="{Binding Volumes}">
+                            <DockPanel Margin="0,5">
+                                <TextBlock DockPanel.Dock="Left" Text="{Binding Icon}" FontFamily="{StaticResource Icons}" FontSize="18" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Detail}" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </HierarchicalDataTemplate>
+                        <HierarchicalDataTemplate DataType="{x:Type local:VolumeItem}" ItemsSource="{Binding Children}">
+                            <DockPanel Margin="0,4" Opacity="{Binding Opacity}">
+                                <TextBlock DockPanel.Dock="Left" Text="{Binding Icon}" FontFamily="{StaticResource Icons}" FontSize="15" VerticalAlignment="Center" Margin="0,0,10,0"
+                                           Foreground="{Binding IconBrush}"/>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Detail}" Style="{StaticResource Secondary}" TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </HierarchicalDataTemplate>
+                        <DataTemplate DataType="{x:Type local:NoteItem}">
+                            <TextBlock Text="{Binding Text}" Style="{StaticResource Secondary}" TextWrapping="Wrap" MaxWidth="230" Margin="0,3"/>
+                        </DataTemplate>
+                    </TreeView.Resources>
+                </TreeView>
             </DockPanel>
+
+            <GridSplitter Grid.Column="1" HorizontalAlignment="Stretch" Background="Transparent" DragCompleted="Splitter_DragCompleted"/>
+
+            <!-- files -->
+            <Border Grid.Column="2" CornerRadius="8,0,0,0" BorderThickness="1,1,0,0"
+                    Background="{DynamicResource LayerFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}">
+              <Grid>
+                <DockPanel x:Name="BrowserView">
+                    <DockPanel DockPanel.Dock="Top" Margin="10,8,10,6">
+                        <Button x:Name="BackButton" DockPanel.Dock="Left" Style="{StaticResource IconButton}" Content="&#xE72B;" Click="Back_Click" IsEnabled="False"
+                                ToolTip="Back (Alt+Left)" AutomationProperties.Name="Back"/>
+                        <Button x:Name="UpButton" DockPanel.Dock="Left" Style="{StaticResource IconButton}" Content="&#xE74A;" Click="Up_Click" IsEnabled="False"
+                                ToolTip="Up one folder (Alt+Up)" AutomationProperties.Name="Up"/>
+                        <Button x:Name="SaveButton" DockPanel.Dock="Right" Style="{DynamicResource AccentButtonStyle}" Click="Save_Click" IsEnabled="False" Margin="8,0,0,0"
+                                AutomationProperties.AutomationId="CopyToWindows">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="&#xE896;" FontFamily="{StaticResource Icons}" VerticalAlignment="Center" Margin="0,1,8,0"/>
+                                <TextBlock x:Name="SaveButtonText" Text="Copy to Windows"/>
+                            </StackPanel>
+                        </Button>
+                        <Grid DockPanel.Dock="Right" Width="190" Margin="8,0,0,0">
+                            <TextBox x:Name="FilterBox" TextChanged="FilterBox_TextChanged" IsEnabled="False" Padding="8,5,8,5"
+                                     ToolTip="Show only names containing this text (Ctrl+F)" AutomationProperties.AutomationId="Filter" AutomationProperties.Name="Filter this folder"/>
+                            <TextBlock x:Name="FilterHint" Text="Filter this folder" IsHitTestVisible="False" VerticalAlignment="Center" Margin="10,0,0,0"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                        </Grid>
+                        <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" x:Name="BreadcrumbScroll" Margin="4,0,0,0">
+                            <StackPanel x:Name="Breadcrumb" Orientation="Horizontal" VerticalAlignment="Center"/>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <ProgressBar x:Name="LoadingBar" DockPanel.Dock="Top" Height="2" IsIndeterminate="True" Visibility="Hidden" BorderThickness="0" Background="Transparent"/>
+
+                    <Border x:Name="WarningBar" DockPanel.Dock="Top" Margin="10,4,10,4" Padding="12,8" CornerRadius="6" Visibility="Collapsed"
+                            Background="{DynamicResource SystemFillColorCautionBackgroundBrush}">
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Left" Text="&#xE7BA;" FontFamily="{StaticResource Icons}" FontSize="15" Margin="0,2,10,0"
+                                       Foreground="{DynamicResource SystemFillColorCautionBrush}"/>
+                            <TextBlock x:Name="WarningText" TextWrapping="Wrap"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Grid>
+                        <ListView x:Name="FileList" BorderThickness="0" Background="Transparent" MouseDoubleClick="FileList_MouseDoubleClick"
+                                  KeyDown="FileList_KeyDown" SelectionChanged="FileList_SelectionChanged"
+                                  GridViewColumnHeader.Click="FileList_HeaderClick" AutomationProperties.AutomationId="FileList"
+                                  SizeChanged="FileList_SizeChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">                            <ListView.ContextMenu>
+                                <ContextMenu>
+                                    <MenuItem Header="Open" Click="OpenSelected_Click"/>
+                                    <MenuItem Header="Copy to Windows…" Click="Save_Click"/>
+                                    <Separator/>
+                                    <MenuItem Header="Copy Linux path" Click="CopyPath_Click"/>
+                                </ContextMenu>
+                            </ListView.ContextMenu>
+                            <ListView.View>
+                                <GridView>
+                                    <GridViewColumn x:Name="NameColumn" Header="Name" Width="340">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Icon}" FontFamily="{StaticResource Icons}" FontSize="15" Foreground="{Binding IconBrush}" Margin="0,1,10,0" VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Size" Width="95">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate><TextBlock Text="{Binding SizeText}"/></DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                    <GridViewColumn Header="Modified" Width="145" DisplayMemberBinding="{Binding ModifiedText}"/>
+                                    <GridViewColumn Header="Type" Width="130" DisplayMemberBinding="{Binding TypeText}"/>
+                                    <GridViewColumn x:Name="PermissionsColumn" Header="Permissions" Width="120">
+                                        <GridViewColumn.CellTemplate>
+                                            <DataTemplate><TextBlock Text="{Binding Permissions}" FontFamily="Consolas"/></DataTemplate>
+                                        </GridViewColumn.CellTemplate>
+                                    </GridViewColumn>
+                                </GridView>
+                            </ListView.View>
+                        </ListView>
+
+                        <!-- shown when there is nothing to list -->
+                        <StackPanel x:Name="EmptyPanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420">
+                            <TextBlock x:Name="EmptyIcon" Text="&#xEDA2;" FontFamily="{StaticResource Icons}" FontSize="44" HorizontalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                            <TextBlock x:Name="EmptyTitle" Text="Choose a Linux partition" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="EmptyText" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,6,0,0"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                       Text="Pick one from the list on the left, or drop a disk image file here."/>
+                        </StackPanel>
+
+                        <!-- shown for a locked encrypted volume -->
+                        <StackPanel x:Name="UnlockPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Width="340" Visibility="Collapsed">
+                            <TextBlock Text="&#xE72E;" FontFamily="{StaticResource Icons}" FontSize="44" HorizontalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
+                            <TextBlock x:Name="UnlockTitle" Text="This volume is encrypted" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,14,0,0" TextAlignment="Center" TextWrapping="Wrap"/>
+                            <TextBlock HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,6,0,14"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="Enter its password to read it. The password is not saved."/>
+                            <PasswordBox x:Name="UnlockPassword" KeyDown="UnlockPassword_KeyDown" AutomationProperties.AutomationId="UnlockPassword" AutomationProperties.Name="Password"/>
+                            <TextBlock x:Name="UnlockError" TextWrapping="Wrap" Margin="0,8,0,0" Visibility="Collapsed"
+                                       Foreground="{DynamicResource SystemFillColorCriticalBrush}"/>
+                            <Button x:Name="UnlockButton" Style="{DynamicResource AccentButtonStyle}" Content="Unlock" Click="Unlock_Click" HorizontalAlignment="Stretch" Margin="0,12,0,0"
+                                    AutomationProperties.AutomationId="UnlockButton"/>
+                            <TextBlock x:Name="UnlockBusy" Text="Checking the password… this can take several seconds." Visibility="Collapsed" TextAlignment="Center" TextWrapping="Wrap" Margin="0,10,0,0"
+                                       Style="{StaticResource Secondary}"/>
+                        </StackPanel>
+                    </Grid>
+                </DockPanel>
+
+                <!-- settings page; replaces the file browser while open -->
+                <ScrollViewer x:Name="SettingsView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,18,28,24" MaxWidth="780">
+                        <DockPanel Margin="0,0,0,2">
+                            <Button DockPanel.Dock="Right" Content="Done" Click="SettingsDone_Click" Style="{DynamicResource AccentButtonStyle}" MinWidth="80"
+                                    VerticalAlignment="Center" AutomationProperties.AutomationId="SettingsDone"/>
+                            <TextBlock Text="Settings" FontSize="24" FontWeight="SemiBold"/>
+                        </DockPanel>
+
+                        <TextBlock Text="Appearance" Style="{StaticResource SettingSection}"/>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <ComboBox x:Name="ThemeBox" DockPanel.Dock="Right" Width="190" VerticalAlignment="Center" Margin="16,0,0,0" SelectionChanged="Setting_Changed"
+                                          AutomationProperties.Name="Theme">
+                                    <ComboBoxItem Content="Same as Windows" Tag="System"/>
+                                    <ComboBoxItem Content="Light" Tag="Light"/>
+                                    <ComboBoxItem Content="Dark" Tag="Dark"/>
+                                </ComboBox>
+                                <StackPanel>
+                                    <TextBlock Text="Theme"/>
+                                    <TextBlock Text="Light or dark colours." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="HiddenBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Show hidden files"/>
+                                <StackPanel>
+                                    <TextBlock Text="Show hidden files"/>
+                                    <TextBlock Text="Linux hides files and folders whose names start with a dot. This only changes what is listed; copying a folder always includes them." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="PermissionsBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Show the Permissions column"/>
+                                <StackPanel>
+                                    <TextBlock Text="Show the Permissions column"/>
+                                    <TextBlock Text="Linux access rights, such as drwxr-xr-x." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Text="Disks" Style="{StaticResource SettingSection}"/>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="ElevateBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Ask for administrator rights at startup"/>
+                                <StackPanel>
+                                    <TextBlock Text="Ask for administrator rights at startup"/>
+                                    <TextBlock Text="Windows only lets administrators read disks directly. With this on, the Windows permission prompt appears every time the app starts." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="WindowsDiskBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Show this PC's Windows disk"/>
+                                <StackPanel>
+                                    <TextBlock Text="Show this PC's Windows disk"/>
+                                    <TextBlock Text="Turn off to keep the disk Windows runs from out of the list." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="VerifyBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Check file integrity while reading"/>
+                                <StackPanel>
+                                    <TextBlock Text="Check file integrity while reading (btrfs)"/>
+                                    <TextBlock Text="Refuses to copy a file whose contents are corrupted on the disk. Turning this off reads faster and lets you rescue what is left of a damaged file." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Text="Files" Style="{StaticResource SettingSection}"/>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="DoubleClickBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Open files with a double-click"/>
+                                <StackPanel>
+                                    <TextBlock Text="Open files with a double-click"/>
+                                    <TextBlock Text="Copies the file to a temporary folder and opens it with its Windows program. With this off, use right-click, Open." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="DatesBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Keep original dates on copied files"/>
+                                <StackPanel>
+                                    <TextBlock Text="Keep original dates on copied files"/>
+                                    <TextBlock Text="Copies keep the 'modified' date they had on the Linux disk. With this off they get the time of the copy." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="OpenFolderBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Offer to open the folder after copying"/>
+                                <StackPanel>
+                                    <TextBlock Text="Offer to open the folder after copying"/>
+                                    <TextBlock Text="Adds an 'Open the folder now?' question to the summary shown when a copy finishes." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
+                        <TextBlock Text="About" Style="{StaticResource SettingSection}"/>
+                        <Border Style="{StaticResource SettingCard}">
+                            <StackPanel>
+                                <TextBlock x:Name="AboutTitle" Text="Linux Drive Reader"/>
+                                <TextBlock Style="{StaticResource Secondary}" TextWrapping="Wrap"
+                                           Text="Reads ext2, ext3, ext4, btrfs and xfs, including inside LUKS-encrypted volumes and LVM. It never writes to the disks it reads."/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+              </Grid>
+            </Border>
         </Grid>
-    </DockPanel>
+
+        <!-- status -->
+        <DockPanel Grid.Row="2" Margin="16,6,12,8">
+            <Button x:Name="CancelButton" DockPanel.Dock="Right" Content="Cancel" Click="Cancel_Click" Visibility="Collapsed" Margin="10,0,0,0" Padding="12,3"/>
+            <ProgressBar x:Name="Progress" DockPanel.Dock="Right" Width="160" Height="4" IsIndeterminate="True" Visibility="Collapsed" VerticalAlignment="Center"/>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="Ready" Style="{StaticResource Secondary}"
+                       AutomationProperties.AutomationId="Status"/>
+        </DockPanel>
+    </Grid>
 </Window>
