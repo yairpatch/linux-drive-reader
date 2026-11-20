@@ -21,6 +21,7 @@ public sealed class Settings
     public bool ShowWindowsDisk { get; set; } = true;
     public bool ElevateAtStartup { get; set; }
     public bool VerifyIntegrity { get; set; } = true;
+    public bool ReplayJournal { get; set; } = true;
     public bool KeepDates { get; set; } = true;
     public bool OfferOpenFolder { get; set; } = true;
     public bool DoubleClickOpens { get; set; } = true;

@@ -71,7 +71,8 @@ public interface IFileSystem : IDisposable
 }
 
 /// <param name="VerifyChecksums">Check file contents against stored checksums where the filesystem has them (btrfs).</param>
-public sealed record OpenOptions(bool VerifyChecksums = true);
+/// <param name="ReplayJournal">If the filesystem was not cleanly unmounted, apply the committed changes waiting in its journal (in memory only).</param>
+public sealed record OpenOptions(bool VerifyChecksums = true, bool ReplayJournal = true);
 
 public static class FileSystems
 {
@@ -80,9 +81,9 @@ public static class FileSystems
     {
         options ??= new OpenOptions();
         var detected = FsDetector.Detect(volume);
-        if (detected.Type is "ext2" or "ext3" or "ext4") return new ExtFileSystem(volume);
+        if (detected.Type is "ext2" or "ext3" or "ext4") return ExtFileSystem.Open(volume, options.ReplayJournal);
         if (detected.Type == "btrfs") return new BtrfsFileSystem(volume, options.VerifyChecksums);
-        if (detected.Type == "xfs") return new XfsFileSystem(volume);
+        if (detected.Type == "xfs") return XfsFileSystem.Open(volume, options.ReplayJournal);
         throw new NotSupportedException(detected.Type == FsDetector.Unknown
             ? "No known filesystem was found on this volume."
             : $"{detected.Type} is not supported yet.");

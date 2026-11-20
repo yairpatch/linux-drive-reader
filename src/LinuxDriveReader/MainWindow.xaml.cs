@@ -307,11 +307,12 @@ public partial class MainWindow : Window
             var (device, fs) = await Task.Run(() =>
             {
                 var dev = v.Disk.Open();
-                try { return (dev, FileSystems.Open(v.Map(dev), new OpenOptions(Settings.Current.VerifyIntegrity))); }
+                try { return (dev, FileSystems.Open(v.Map(dev), new OpenOptions(Settings.Current.VerifyIntegrity, Settings.Current.ReplayJournal))); }
                 catch { dev.Dispose(); throw; }
             });
             _device = device; _fs = fs; _volume = v;
             _fsVerified = Settings.Current.VerifyIntegrity;
+            _fsReplayed = Settings.Current.ReplayJournal;
             if (fs.Warnings.Count > 0)
             {
                 WarningText.Text = string.Join("\n", fs.Warnings);
@@ -456,7 +457,7 @@ public partial class MainWindow : Window
         try
         {
             bool elevated = App.IsElevated;
-            var options = new OpenOptions(Settings.Current.VerifyIntegrity);
+            var options = new OpenOptions(Settings.Current.VerifyIntegrity, Settings.Current.ReplayJournal);
             var mount = await Task.Run(() =>
             {
                 var device = v.Disk.Open();
@@ -561,14 +562,15 @@ public partial class MainWindow : Window
 
     private bool _loadingSettings;
     private bool _fsVerified = true; // whether the open volume was opened with integrity checking
+    private bool _fsReplayed = true; // ...and with its journal applied
 
     private void Settings_Click(object sender, RoutedEventArgs e) => ShowSettings(SettingsView.Visibility != Visibility.Visible);
 
     private async void SettingsDone_Click(object sender, RoutedEventArgs e)
     {
         ShowSettings(false);
-        // Integrity checking is fixed when a volume is opened, so reopen it if that changed.
-        if (_volume is { } v && _fsVerified != Settings.Current.VerifyIntegrity && !_busy) await OpenVolumeAsync(v);
+        // These are fixed when a volume is opened, so reopen it if either changed.
+        if (_volume is { } v && (_fsVerified != Settings.Current.VerifyIntegrity || _fsReplayed != Settings.Current.ReplayJournal) && !_busy) await OpenVolumeAsync(v);
     }
 
     private void ShowSettings(bool show)
@@ -584,6 +586,7 @@ public partial class MainWindow : Window
             ElevateBox.IsChecked = s.ElevateAtStartup;
             WindowsDiskBox.IsChecked = s.ShowWindowsDisk;
             VerifyBox.IsChecked = s.VerifyIntegrity;
+            JournalBox.IsChecked = s.ReplayJournal;
             DoubleClickBox.IsChecked = s.DoubleClickOpens;
             ExplorerBox.IsChecked = s.OpenExplorerAfterMount;
             DatesBox.IsChecked = s.KeepDates;
@@ -606,6 +609,7 @@ public partial class MainWindow : Window
         s.ElevateAtStartup = ElevateBox.IsChecked == true;
         s.ShowWindowsDisk = WindowsDiskBox.IsChecked == true;
         s.VerifyIntegrity = VerifyBox.IsChecked == true;
+        s.ReplayJournal = JournalBox.IsChecked == true;
         s.DoubleClickOpens = DoubleClickBox.IsChecked == true;
         s.OpenExplorerAfterMount = ExplorerBox.IsChecked == true;
         s.KeepDates = DatesBox.IsChecked == true;

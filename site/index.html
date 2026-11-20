@@ -73,6 +73,7 @@
           <li><svg class="i yes" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Copy single files or whole folders, with progress and cancel</li>
           <li><svg class="i yes" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Original dates kept; existing files never overwritten</li>
           <li><svg class="i yes" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Linux names Windows rejects are renamed, and every rename is listed</li>
+          <li><svg class="i yes" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Disks from a crashed or unplugged machine show their latest files</li>
           <li><svg class="i yes" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>Works on raw disk images (.img, .dd) without administrator rights</li>
         </ul>
       </div>
@@ -117,11 +118,11 @@
     <div class="head"><p class="eyebrow">Formats</p><h2>What it can read</h2></div>
     <div class="cards">
       <article class="card"><h3>ext2 · ext3 · ext4</h3><span class="badge ok">Supported</span>
-        <p>The default on Ubuntu, Debian and most distributions. All current layouts, including inline data, bigalloc and 64-bit volumes.</p></article>
+        <p>The default on Ubuntu, Debian and most distributions. All current layouts, including inline data, bigalloc and 64-bit volumes. Unfinished changes in the journal are applied.</p></article>
       <article class="card"><h3>btrfs</h3><span class="badge ok">Supported</span>
         <p>The default on Fedora and openSUSE. Subvolumes, snapshots, and zstd, LZO or zlib compression. Every file is checked against its stored checksum.</p></article>
       <article class="card"><h3>xfs</h3><span class="badge ok">Supported</span>
-        <p>The default on RHEL, Rocky and AlmaLinux. Both the current v5 format and the older v4.</p></article>
+        <p>The default on RHEL, Rocky and AlmaLinux. Both the current v5 format and the older v4. Unfinished changes in the log are applied.</p></article>
       <article class="card"><h3>LUKS 1 &amp; 2</h3><span class="badge ok">Supported</span>
         <p>Full-disk encryption. Unlocked with your password; AES, which every distribution uses by default.</p></article>
       <article class="card"><h3>LVM</h3><span class="badge ok">Supported</span>
@@ -200,7 +201,7 @@
     <div class="faq">
       <div><h3>Can it damage my disk?</h3><p>No. Disks are opened read-only and the drive letter is read-only too. The app has no code that writes to a disk.</p></div>
       <div><h3>Why does it ask for administrator rights?</h3><p>Windows only allows administrators to read a physical disk directly. Disk image files work without them.</p></div>
-      <div><h3>The disk came from a machine that crashed.</h3><p>The app tells you when a filesystem wasn't shut down cleanly. Everything still opens, but the last changes before the crash may be missing.</p></div>
+      <div><h3>The disk came from a machine that crashed.</h3><p>When Linux stops without a clean shutdown, its last changes are still waiting in the filesystem's journal. For ext3, ext4 and xfs the app applies them in memory as it opens the disk, just as Linux would, so you see the latest files. The disk itself isn't changed.</p></div>
       <div><h3>Does it work on Windows 10?</h3><p>It has only been tested on Windows 11. Mounting as a drive letter needs Windows 11 24H2 or newer; browsing and copying don't.</p></div>
       <div><h3>Is my encryption password stored?</h3><p>No. It's used to unlock the volume and kept in memory only while the app is open.</p></div>
       <div><h3>My disk isn't supported.</h3><p><a href="https://github.com/yairpatch/linux-drive-reader/issues">Open an issue</a> and include what the app shows for that partition. Unsupported formats are still identified by name.</p></div>

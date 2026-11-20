@@ -30,6 +30,14 @@ internal static class Checksums
         return actual[..size].SequenceEqual(expected[..size]);
     }
 
+    /// <summary>CRC32C continued from <paramref name="crc"/> with no inversion before or after, as Linux's crc32c() computes it.</summary>
+    public static uint Crc32CRaw(uint crc, ReadOnlySpan<byte> data)
+    {
+        while (data.Length >= 8) { crc = BitOperations.Crc32C(crc, BinaryPrimitives.ReadUInt64LittleEndian(data)); data = data[8..]; }
+        foreach (byte b in data) crc = BitOperations.Crc32C(crc, b);
+        return crc;
+    }
+
     public static uint Crc32C(ReadOnlySpan<byte> data)
     {
         uint crc = 0xFFFFFFFF;

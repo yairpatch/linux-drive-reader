@@ -25,9 +25,38 @@ public sealed class XfsFileSystem : IFileSystem
     public IReadOnlyList<string> Warnings => _warnings;
     public FsNode Root { get; }
 
-    public XfsFileSystem(IBlockDevice device)
+    private readonly bool _logDirty;
+    private readonly long _logStartBytes, _logBBs;
+
+    /// <summary>How many log transactions were applied when opening; -1 if the log was not replayed.</summary>
+    public int LogTransactionsApplied { get; } = -1;
+
+    /// <summary>
+    /// Opens the filesystem. If it was not cleanly unmounted and <paramref name="replayLog"/> is set, the
+    /// committed changes waiting in its log are applied in memory first, as Linux would at mount time.
+    /// </summary>
+    public static XfsFileSystem Open(IBlockDevice device, bool replayLog = true)
+    {
+        var fs = new XfsFileSystem(device);
+        if (!replayLog || !fs._logDirty) return fs;
+        XfsLog.Result result;
+        try { result = XfsLog.Recover(device, fs._logStartBytes, fs._logBBs, fs._v5, fs._inodeSize); }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or IOException)
+        {
+            fs._warnings.Add("The changes waiting in its log could not be applied: " + ex.Message);
+            return fs;
+        }
+        var replayed = new XfsFileSystem(new OverlayDevice(device, 512, result.Sectors), result.Transactions);
+        replayed._warnings.AddRange(result.Problems);
+        return replayed;
+    }
+
+    public XfsFileSystem(IBlockDevice device) : this(device, -1) { }
+
+    private XfsFileSystem(IBlockDevice device, int logApplied)
     {
         Device = device;
+        LogTransactionsApplied = logApplied;
         if (device.Length < 4096) throw new InvalidDataException("Volume is too small to hold an XFS filesystem.");
         var sb = new byte[512];
         device.Read(0, sb);
@@ -67,8 +96,19 @@ public sealed class XfsFileSystem : IFileSystem
         }
         else _hasFtype = (version & 0x8000) != 0 && (features2 & 0x200) != 0;
 
-        if (logStart != 0 && LogIsDirty(logStart, logBlocks))
-            _warnings.Add("This filesystem was not cleanly unmounted. The most recent changes may be missing or shown incorrectly.");
+        if (logStart == 0)
+        {
+            if (logBlocks > 0 && logApplied < 0)
+                _warnings.Add("This filesystem keeps its log on a separate device, so changes waiting there cannot be checked or applied.");
+        }
+        else
+        {
+            _logStartBytes = DiskBlock(logStart) * BlockSize;
+            _logBBs = logBlocks * BlockSize / 512;
+            _logDirty = logApplied < 0 && LogIsDirty(logStart, logBlocks);
+            if (_logDirty)
+                _warnings.Add("This filesystem was not cleanly unmounted. The most recent changes may be missing or shown incorrectly.");
+        }
 
         Root = MakeNode("", rootInode);
         if (Root.Kind != FsNodeKind.Directory) throw new InvalidDataException("The root folder of this filesystem is damaged.");

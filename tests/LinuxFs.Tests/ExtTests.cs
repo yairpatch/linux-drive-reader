@@ -63,10 +63,10 @@ public class ExtTests
         return Convert.ToHexString(SHA256.HashData(s)).ToLowerInvariant();
     }
 
-    internal static void AssertMatchesLinux(IBlockDevice volume, string manifestPrefix, string expectedType)
+    internal static void AssertMatchesLinux(IBlockDevice volume, string manifestPrefix, string expectedType, OpenOptions? options = null)
     {
         var expected = LoadManifest(manifestPrefix);
-        using var fs = FileSystems.Open(volume);
+        using var fs = FileSystems.Open(volume, options);
         Assert.Equal(expectedType, fs.TypeName);
         Assert.Empty(fs.Warnings);
 
@@ -248,17 +248,6 @@ public class ExtTests
         Assert.True(File.Exists(path), "xfs_v4.img was not built: the build machine's kernel or mkfs.xfs has no v4 support");
         using var dev = new CachedDevice(new ImageFileDevice(path));
         AssertMatchesLinux(dev, path, "xfs");
-    }
-
-    [Fact]
-    public void Xfs_warns_when_the_log_was_not_closed_cleanly()
-    {
-        using var dev = new CachedDevice(new ImageFileDevice(Path.Combine(Images, "xfs_dirty.img")));
-        using var fs = FileSystems.Open(dev);
-        Assert.Contains(fs.Warnings, w => w.Contains("not cleanly unmounted"));
-        var all = new Dictionary<string, FsNode>();
-        Walk(fs, fs.Root, "", all); // still browsable
-        Assert.Contains("hello.txt", all.Keys);
     }
 
     [Fact]

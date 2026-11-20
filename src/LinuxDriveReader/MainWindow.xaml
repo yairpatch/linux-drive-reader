@@ -317,6 +317,16 @@
                             </DockPanel>
                         </Border>
 
+                        <Border Style="{StaticResource SettingCard}">
+                            <DockPanel>
+                                <CheckBox x:Name="JournalBox" Style="{StaticResource SettingToggle}" Click="Setting_Changed" AutomationProperties.Name="Apply unfinished changes from the journal"/>
+                                <StackPanel>
+                                    <TextBlock Text="Apply unfinished changes from the journal (ext3, ext4, xfs)"/>
+                                    <TextBlock Text="When Linux was not shut down cleanly, its last changes may still be waiting in the journal. They are applied in memory, as Linux would, so you see the latest files. Your disk is not changed." Style="{StaticResource Secondary}" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+
                         <TextBlock Text="Files" Style="{StaticResource SettingSection}"/>
                         <Border Style="{StaticResource SettingCard}">
                             <DockPanel>

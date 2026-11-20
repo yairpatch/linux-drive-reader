@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the disk images the tests read. Development-time only: needs Linux and root
 # (it formats and loop-mounts images). The app itself never uses this.
-#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs|xfs|crypt]
+#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs|xfs|crypt|journal]
 set -euo pipefail
 OUT="$1"
 if [ $# -ge 2 ]; then ONLY=$2; else ONLY=all; fi
@@ -281,7 +281,7 @@ build_xfs() { # <name> <size> <hook or ''> <mkfs.xfs args...>
   cp "$img" "$OUT/$name.img"
   echo "built $name.img ($(filefrag "$OUT/$name.img" >/dev/null 2>&1; echo ok))"
 }
-build_xfs xfs_default 300M hook_dirty -L xfstest
+build_xfs xfs_default 300M "" -L xfstest
 build_xfs xfs_1k      300M ""         -L xfs1k -b size=1024 -n size=8192
 # The old v4 format: recent kernels refuse to mount it, so let mkfs.xfs fill it from a folder instead.
 V=$W/v4src; mkdir "$V"; cp -a "$XSRC/." "$V/"
@@ -370,5 +370,69 @@ cryptsetup close t_cl
 losetup -d "$CD"
 cp "$C" "$OUT/luks_lvm.img"
 echo "built luks_lvm.img"
+fi
+
+if [ "$ONLY" = all ] || [ "$ONLY" = journal ]; then
+# ---- disks copied in the middle of use: committed changes still only in the journal / log ----
+# Keep the kernel from writing changed metadata back to its home location on its own, so that a copy
+# taken right after "sync" holds those changes only in the journal, as after a crash or a pulled plug.
+OLD_EXPIRE=$(cat /proc/sys/vm/dirty_expire_centisecs); OLD_WB=$(cat /proc/sys/vm/dirty_writeback_centisecs)
+restore_vm() { echo "$OLD_EXPIRE" > /proc/sys/vm/dirty_expire_centisecs; echo "$OLD_WB" > /proc/sys/vm/dirty_writeback_centisecs; }
+trap 'restore_vm; cleanup' EXIT
+echo 360000 > /proc/sys/vm/dirty_expire_centisecs
+echo 0 > /proc/sys/vm/dirty_writeback_centisecs
+
+changes() { # what happens between the last clean unmount and the "crash"
+  mkdir -p "$MNT/added/deep"
+  for i in $(seq 1 300); do echo "new file $i" > "$MNT/added/file_$i.txt"; done
+  head -c 3000000 /dev/urandom > "$MNT/added/deep/big.bin"
+  echo "appended after the last clean unmount" >> "$MNT/readme.txt"
+  rm -r "$MNT/sub"
+  mv "$MNT/readme.txt" "$MNT/readme-renamed.txt"
+  ln -s added/deep/big.bin "$MNT/link_to_big"
+  printf '\300\073\071\230 starts with the journal magic number' > "$MNT/added/escape.bin"
+  chmod 600 "$MNT/added/file_1.txt"
+  touch -d '2021-06-07 08:09:10 UTC' "$MNT/added/file_2.txt"
+}
+churn() { # fill the journal several times over, so that it wraps around its end
+  mkdir -p "$MNT/churn"
+  for round in $(seq 1 ${CHURN_ROUNDS:-0}); do
+    for i in $(seq 1 ${CHURN_FILES:-150}); do echo "$round $i" > "$MNT/churn/f_$i"; done; sync
+    rm -f "$MNT"/churn/f_*; sync
+  done
+  rmdir "$MNT/churn"
+}
+dirty() { # <name> <size> <kind ext|xfs> <mount options> <mkfs args...>
+  local name=$1 size=$2 kind=$3 mopts=$4; shift 4
+  local img=$W/$name.img truth=$W/truth.img
+  rm -f "$img"; truncate -s "$size" "$img"
+  if [ "$kind" = ext ]; then mke2fs -q -F "$@" "$img"; else mkfs.xfs -q -f "$@" "$img"; fi
+  mount -o loop "$img" "$MNT"; cp -a "$SMALL/." "$MNT/"; umount "$MNT"
+  mount -o "loop,$mopts" "$img" "$MNT"
+  churn
+  changes
+  sync
+  cp "$img" "$OUT/$name.img"          # the "crash": a copy of the disk while still in use
+  umount "$MNT"
+  # What Linux shows for that copy: mounting it replays the journal.
+  cp "$OUT/$name.img" "$truth"
+  if [ "$kind" = ext ]; then mount -o loop "$truth" "$MNT"; else mount -o loop,nouuid "$truth" "$MNT"; fi
+  manifest "$MNT" "$OUT/$name.img"
+  umount "$MNT"; rm -f "$truth"
+  if [ "$kind" = ext ]; then
+    dumpe2fs -h "$OUT/$name.img" 2>/dev/null | grep -q needs_recovery && echo "built $name.img (journal needs replay)" || echo "WARNING: $name.img does not need replay"
+  else
+    echo "built $name.img"
+  fi
+}
+dirty ext4_journal        64M  ext rw            -t ext4 -L journal
+dirty ext4_journal_data   64M  ext data=journal  -t ext4 -L datajournal
+dirty ext3_journal        64M  ext rw            -t ext3 -L journal3
+dirty xfs_journal        300M  xfs rw            -L xfsjournal
+dirty xfs_journal_1k     300M  xfs rw            -L xfsjournal1k -b size=1024
+CHURN_ROUNDS=40 dirty ext4_journal_wrap  64M  ext rw  -t ext4 -L wrap -J size=4
+CHURN_ROUNDS=60 CHURN_FILES=2000 dirty xfs_journal_wrap 300M  xfs rw  -L xfswrap
+CHURN_ROUNDS=0
+restore_vm
 fi
 ls -la "$OUT"/*.img

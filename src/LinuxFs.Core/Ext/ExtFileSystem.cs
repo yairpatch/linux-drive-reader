@@ -31,9 +31,37 @@ public sealed class ExtFileSystem : IFileSystem
     public IReadOnlyList<string> Warnings => _warnings;
     public FsNode Root { get; }
 
-    public ExtFileSystem(IBlockDevice device)
+    /// <summary>How many journal transactions were applied when opening; -1 if the journal was not replayed.</summary>
+    public int JournalTransactionsApplied { get; private set; } = -1;
+    internal bool NeedsRecovery => (_incompat & IncompatRecover) != 0;
+    internal long JournalInode { get; }
+
+    /// <summary>
+    /// Opens the filesystem. If it was not cleanly unmounted and <paramref name="replayJournal"/> is set, the
+    /// committed changes waiting in its journal are applied in memory first, as Linux would at mount time.
+    /// </summary>
+    public static ExtFileSystem Open(IBlockDevice device, bool replayJournal = true)
+    {
+        var fs = new ExtFileSystem(device);
+        if (!replayJournal || !fs.NeedsRecovery || fs.JournalInode == 0) return fs;
+        Jbd2.Result result;
+        try { result = Jbd2.Replay(fs, fs.JournalInode, fs._blocksCount); }
+        catch (Exception ex) when (ex is InvalidDataException or NotSupportedException or IOException)
+        {
+            fs._warnings.Add("The changes waiting in its journal could not be applied: " + ex.Message);
+            return fs;
+        }
+        var replayed = new ExtFileSystem(new OverlayDevice(device, fs.BlockSize, result.Blocks), result.Transactions);
+        replayed._warnings.AddRange(result.Problems);
+        return replayed;
+    }
+
+    public ExtFileSystem(IBlockDevice device) : this(device, -1) { }
+
+    private ExtFileSystem(IBlockDevice device, int journalApplied)
     {
         Device = device;
+        JournalTransactionsApplied = journalApplied;
         if (device.Length < 2048) throw new InvalidDataException("Volume is too small to hold an ext filesystem.");
         var sb = new byte[1024];
         device.Read(1024, sb);
@@ -74,8 +102,11 @@ public sealed class ExtFileSystem : IFileSystem
         uint unknown = _incompat & ~(ReadableIncompat | IncompatCompression | IncompatJournalDev | IncompatDirdata);
         if (unknown != 0)
             _warnings.Add($"This filesystem uses features this app does not know (0x{unknown:X}). Some content may be shown incorrectly.");
-        if ((_incompat & IncompatRecover) != 0)
-            _warnings.Add("This filesystem was not cleanly unmounted. The most recent changes may be missing or shown incorrectly.");
+        JournalInode = (compat & 0x4) != 0 ? U32(sb, 0xE0) : 0;
+        if ((_incompat & IncompatRecover) != 0 && journalApplied < 0)
+            _warnings.Add(JournalInode == 0
+                ? "This filesystem was not cleanly unmounted, and its journal is on a separate device. The most recent changes may be missing."
+                : "This filesystem was not cleanly unmounted. The most recent changes may be missing or shown incorrectly.");
 
         Label = ReadText(sb.AsSpan(0x78, 16));
         const uint ext4Incompat = ReadableIncompat & ~(IncompatFiletype | IncompatRecover | IncompatMetaBg);
