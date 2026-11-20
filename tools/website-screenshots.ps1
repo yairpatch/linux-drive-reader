@@ -62,10 +62,10 @@ try {
   Snap $script:p.MainWindowHandle 'encrypted-light.png'
   Stop-App
   # mounted as a drive, plus File Explorer showing it
-  Start-App 'Dark' 'laptop.img' '@home/alex'
+  Start-App 'Light' 'laptop.img' '@home/alex'
   $before = (Get-PSDrive -PSProvider FileSystem).Name
   Press 'MountDrive'; Start-Sleep -Seconds 5
-  Snap $script:p.MainWindowHandle 'mounted-dark.png'
+  Snap $script:p.MainWindowHandle 'mounted-light.png'
   $letter = (Get-PSDrive -PSProvider FileSystem).Name | Where-Object { $before -notcontains $_ } | Select-Object -First 1
   if ($letter) {
     $shell = New-Object -ComObject Shell.Application
@@ -83,7 +83,7 @@ try {
   }
   Press 'EjectDrive'; Start-Sleep -Seconds 3
   Press 'SettingsButton'; Start-Sleep -Seconds 2
-  Snap $script:p.MainWindowHandle 'settings-dark.png'
+  Snap $script:p.MainWindowHandle 'settings-light.png'
   Stop-App
 } finally {
   Get-Process LinuxDriveReader -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Exe } | Stop-Process -Force -ErrorAction SilentlyContinue

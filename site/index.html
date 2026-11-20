@@ -3,144 +3,131 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Linux Drive Reader — read Linux disks on Windows</title>
-<meta name="description" content="Browse, copy and mount ext4, btrfs and xfs disks, including LUKS-encrypted and LVM ones, on Windows. No WSL, no drivers, never writes to your disk. Free and open source.">
+<title>Linux Drive Reader</title>
+<meta name="description" content="A Windows program that reads disks formatted by Linux (ext4, btrfs, xfs, including LUKS-encrypted and LVM ones). Browse them, copy files off, or give them a drive letter. It never writes to the disk.">
 <meta property="og:title" content="Linux Drive Reader">
-<meta property="og:description" content="Read Linux disks on Windows: ext4, btrfs, xfs, LUKS and LVM. No WSL, no drivers, read-only.">
-<meta property="og:image" content="assets/browse-dark.png">
-<meta name="theme-color" content="#0b1220">
+<meta property="og:description" content="Read ext4, btrfs and xfs disks on Windows, including encrypted ones. Free, open source, read-only.">
+<meta property="og:image" content="assets/browse-light.png">
 <link rel="icon" href="assets/favicon.png">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="nav">
-  <div class="wrap nav-inner">
-    <a class="brand" href="#top"><img src="assets/icon.png" alt="" width="28" height="28">Linux Drive Reader</a>
-    <nav>
-      <a href="#features">Features</a>
-      <a href="#formats">Supported disks</a>
-      <a href="#faq">FAQ</a>
-      <a href="https://github.com/yairpatch/linux-drive-reader" class="gh">GitHub</a>
-    </nav>
-  </div>
+
+<header class="top">
+  <a class="name" href="./"><img src="assets/icon.png" alt="" width="22" height="22">Linux Drive Reader</a>
+  <nav><a href="#download">Download</a><a href="#reads">What it reads</a><a href="#how">How it works</a><a href="https://github.com/yairpatch/linux-drive-reader">Source</a></nav>
 </header>
 
-<main id="top">
-  <section class="hero">
-    <div class="wrap">
-      <h1>Read your Linux disks <br><span class="accent">on Windows.</span></h1>
-      <p class="lead">Browse, copy and mount ext4, btrfs and xfs drives, even encrypted ones, straight from Windows.
-        No WSL, no drivers, and nothing is ever written to your disk.</p>
-      <div class="cta">
-        <a class="btn primary" href="https://github.com/yairpatch/linux-drive-reader/releases/latest/download/LinuxDriveReaderSetup.exe" id="download">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 19h16"/></svg>
-          Download for Windows
-        </a>
-        <a class="btn" href="https://github.com/yairpatch/linux-drive-reader">View the source</a>
+<main>
+  <section class="intro">
+    <h1>Open your Linux disk on Windows.</h1>
+    <p>Linux Drive Reader is a Windows program for disks formatted by Linux: ext4, btrfs and xfs, including ones
+      encrypted with LUKS or split up with LVM. Plug the disk in, pick a partition, and browse it. Copy files off,
+      or give the partition a drive letter so every other program can open it too.</p>
+    <p>It only ever reads. Nothing is written to your disk.</p>
+  </section>
+
+  <figure class="shot wide">
+    <img src="assets/browse-light.png" alt="The app showing the home folder on the btrfs partition of a Linux laptop disk" width="1475" height="900">
+    <figcaption>Browsing <code>@home/alex</code> on a btrfs partition taken out of an Ubuntu laptop.</figcaption>
+  </figure>
+
+  <section id="download" class="download">
+    <div class="file">
+      <a class="get" href="https://github.com/yairpatch/linux-drive-reader/releases/latest/download/LinuxDriveReaderSetup.exe">Download LinuxDriveReaderSetup.exe</a>
+      <span class="facts"><span id="ver">Version 1.0.0</span> · <span id="size">62 MB</span> · Windows 11, 64-bit</span>
+    </div>
+    <p>The installer can put it in Program Files for everyone, or in your own folder without administrator rights.
+      There is also a <a href="https://github.com/yairpatch/linux-drive-reader/releases/latest">portable exe and SHA-256 checksums</a> on the release page.</p>
+    <p class="note"><b>About the warning:</b> the program isn’t code-signed yet, so Windows shows
+      “Windows protected your PC” the first time. Click <i>More info</i>, then <i>Run anyway</i>.
+      The full source is on <a href="https://github.com/yairpatch/linux-drive-reader">GitHub</a>, and every release is built there from it.</p>
+  </section>
+
+  <section id="reads">
+    <h2>What it reads</h2>
+    <table>
+      <tr><th>ext2, ext3, ext4</th><td>All current layouts, including inline data, bigalloc and 64-bit volumes.</td></tr>
+      <tr><th>btrfs</th><td>Subvolumes and snapshots, zstd, LZO and zlib compression. Every file is checked against
+        its stored checksum, so a corrupted file is reported instead of quietly copied.</td></tr>
+      <tr><th>xfs</th><td>The current v5 format and the older v4.</td></tr>
+      <tr><th>LUKS 1 and 2</th><td>Unlocked with your password. AES only, which is what every distribution uses by default.</td></tr>
+      <tr><th>LVM</th><td>Logical volumes, as long as they sit on one disk.</td></tr>
+      <tr><th>Partitions</th><td>GPT, MBR including logical partitions, or a filesystem written straight onto the disk.</td></tr>
+      <tr><th>Disk images</th><td>Raw <code>.img</code> and <code>.dd</code> files. These don’t need administrator rights.</td></tr>
+    </table>
+    <p class="not"><b>Not yet:</b> f2fs, ZFS, btrfs or LVM spread across several disks, and writing.
+      Anything it can’t open is still recognised and named, so you know what you’re dealing with.</p>
+
+    <div class="nesting" aria-label="Diagram: partition, then LUKS, then LVM, then an ext4 filesystem">
+      <div class="box"><span>GPT partition 2</span>
+        <div class="box"><span>LUKS2, unlocked with your password</span>
+          <div class="box"><span>LVM volume group <code>demovg</code></span>
+            <div class="row">
+              <div class="box leaf"><span><code>root</code> · ext4</span></div>
+              <div class="box leaf"><span><code>home</code> · ext4</span></div>
+              <div class="box leaf off"><span><code>swap</code></span></div>
+            </div>
+          </div>
+        </div>
       </div>
-      <p class="meta"><span id="version">Latest version</span> · Windows 11, 64-bit · Free and open source (Apache 2.0)</p>
-      <figure class="shot hero-shot">
-        <img src="assets/browse-dark.png" alt="Linux Drive Reader showing the home folder on a btrfs partition of a Linux laptop disk" width="1475" height="900">
-      </figure>
     </div>
+    <p class="caption">The usual “encrypt the whole disk” install, as Ubuntu and Fedora set it up. Each layer is opened in turn and the volumes inside appear in the list.</p>
   </section>
 
-  <section id="features" class="wrap">
-    <h2>Everything you need to get at your Linux files</h2>
-    <div class="grid">
-      <article class="card"><div class="ico">🗂️</div><h3>The filesystems Linux actually uses</h3>
-        <p>ext2, ext3 and ext4; btrfs with its subvolumes, snapshots and zstd, LZO or zlib compression; and xfs.</p></article>
-      <article class="card"><div class="ico">🔐</div><h3>Encrypted disks too</h3>
-        <p>Unlock LUKS1 and LUKS2 volumes with your password and open the LVM volumes inside: the standard “encrypted install” layout works end to end.</p></article>
-      <article class="card"><div class="ico">💽</div><h3>A real drive letter</h3>
-        <p>“Mount as drive” makes a Linux volume appear as a drive in File Explorer, so any program can open your files directly.</p></article>
-      <article class="card"><div class="ico">🛡️</div><h3>Read-only by design</h3>
-        <p>Your disk is never written to. On btrfs, every file is checked against its stored checksum, so corruption is reported instead of copied.</p></article>
-      <article class="card"><div class="ico">🧩</div><h3>No WSL, no drivers</h3>
-        <p>An ordinary Windows app. The filesystem readers are built in, so there is nothing else to install and nothing running in the background.</p></article>
-      <article class="card"><div class="ico">📋</div><h3>Copies that just work</h3>
-        <p>Names Windows doesn’t allow are fixed and reported, original dates are kept, and existing files are never overwritten.</p></article>
-    </div>
+  <section class="pair">
+    <figure class="shot"><img src="assets/encrypted-light.png" alt="An unlocked LUKS partition with its LVM volumes listed, showing photos in the home volume" loading="lazy" width="1475" height="900">
+      <figcaption>The same layout after unlocking: three LVM volumes, one of them open.</figcaption></figure>
+    <figure class="shot"><img src="assets/explorer.png" alt="File Explorer showing the Linux home folder on drive L:" loading="lazy" width="1424" height="750">
+      <figcaption>After <i>Mount as drive</i>: the btrfs partition as drive L: in File Explorer.</figcaption></figure>
   </section>
 
-  <section class="wrap showcase">
-    <div class="text">
-      <h2>Encrypted? Enter your password.</h2>
-      <p>Pick an encrypted partition and type its password. Linux Drive Reader unlocks it, finds the LVM volume group inside and lists every volume, ready to browse.</p>
-      <p class="small">The password is never stored. Unlocking takes a few seconds, exactly as on Linux.</p>
-    </div>
-    <figure class="shot"><img src="assets/encrypted-light.png" alt="An unlocked LUKS partition with its LVM volumes listed, showing photos in the home volume" loading="lazy" width="1475" height="900"></figure>
+  <section id="how">
+    <h2>How it works</h2>
+    <p>Windows can’t read Linux filesystems, and the usual ways around that are a virtual machine (WSL), or a
+      kernel driver for each filesystem. This program does neither. The readers for ext4, btrfs and xfs, the
+      LUKS decryption (including the Argon2 password hashing) and the zstd and LZO decompressors are written into
+      the app itself, so it runs like any other program and needs nothing else installed.</p>
+    <p>The drive letter needed a trick. Only a driver can add a real disk to Windows, so instead the app runs a
+      small read-only file server that only this computer can reach, at <code>127.0.0.1</code>, and asks Windows’
+      own file-sharing client to connect to it. Explorer sees an ordinary network drive. Connecting on a private
+      port like this became possible in Windows 11 version 24H2, which is why mounting needs that version.</p>
+    <p>Reading a disk directly is something Windows only allows administrators to do, so the app asks for those
+      rights when you want to open a physical disk. Disk image files work without them.</p>
   </section>
 
-  <section class="wrap showcase flip">
-    <div class="text">
-      <h2>Use your Linux files in any app.</h2>
-      <p>Click <b>Mount as drive</b> and the volume appears in File Explorer as a drive letter. Open documents in Word, photos in your viewer, or search it like any other drive.</p>
-      <p class="small">Requires Windows 11 version 24H2 or newer. The drive is read-only and disappears when you eject it or close the app.</p>
-    </div>
-    <div class="stack">
-      <figure class="shot"><img src="assets/mounted-dark.png" alt="The app showing the volume mounted as drive L:" loading="lazy" width="1475" height="900"></figure>
-      <figure class="shot overlap"><img src="assets/explorer.png" alt="File Explorer showing the Linux home folder on drive L:" loading="lazy" width="1424" height="750"></figure>
-    </div>
+  <section>
+    <h2>Good to know</h2>
+    <ul class="plain">
+      <li>If Linux was shut down uncleanly (a crash, a pulled plug), the app says so. The last changes before the crash may not show.</li>
+      <li>Linux file names that Windows doesn’t allow, like <code>notes:draft?</code>, are renamed when copied, and you get a list of every change. Existing files are never overwritten.</li>
+      <li>Symbolic links are followed when browsing and on the drive letter. Device files and sockets are left out.</li>
+      <li>Passwords for encrypted disks are kept in memory only while the app runs.</li>
+    </ul>
   </section>
 
-  <section id="formats" class="wrap">
-    <h2>Supported disks</h2>
-    <div class="table">
-      <div class="row head"><span>Format</span><span>Support</span></div>
-      <div class="row"><span>ext2 · ext3 · ext4</span><span class="ok">Read, including inline data, bigalloc and 64-bit layouts</span></div>
-      <div class="row"><span>btrfs</span><span class="ok">Read: subvolumes, snapshots, zstd / LZO / zlib, all checksum types</span></div>
-      <div class="row"><span>xfs</span><span class="ok">Read: v4 and v5 formats</span></div>
-      <div class="row"><span>LUKS1 · LUKS2</span><span class="ok">Unlock with a password (AES, PBKDF2 / Argon2)</span></div>
-      <div class="row"><span>LVM</span><span class="ok">Volumes stored on a single disk</span></div>
-      <div class="row"><span>Partition tables</span><span class="ok">GPT, MBR with logical partitions, or none</span></div>
-      <div class="row"><span>Disk images</span><span class="ok">Raw .img / .dd files, no administrator rights needed</span></div>
-      <div class="row"><span>Not yet</span><span class="no">f2fs, ZFS, btrfs and LVM spread over several disks, writing</span></div>
-    </div>
-  </section>
-
-  <section class="wrap steps">
-    <h2>Up and running in a minute</h2>
-    <ol>
-      <li><b>Install.</b> Download and run the installer. Choose “just for me” if you don’t have administrator rights.</li>
-      <li><b>Connect the disk.</b> Plug in the drive, or open a disk image file.</li>
-      <li><b>Browse.</b> Click <i>Restart as administrator</i> once (Windows only lets administrators read disks directly), pick a partition, and copy or mount.</li>
-    </ol>
-  </section>
-
-  <section id="faq" class="wrap faq">
-    <h2>Questions</h2>
-    <details><summary>Windows says “Windows protected your PC”. Is it safe?</summary>
-      <p>That warning appears for programs that aren’t code-signed, which costs money this free project hasn’t spent yet. Click <b>More info</b>, then <b>Run anyway</b>. The full source code is public on GitHub, and each release lists SHA-256 checksums of its files.</p></details>
-    <details><summary>Can it damage my Linux disk?</summary>
-      <p>It never writes to the disks it reads: they are opened read-only, and the drive letter is read-only too. If you shut Linux down uncleanly the app will tell you, because the most recent changes may not be visible yet.</p></details>
-    <details><summary>Why does it need administrator rights?</summary>
-      <p>Windows only lets administrators read a disk directly. Disk image files work without them. You can also turn on <i>Ask for administrator rights at startup</i> in Settings.</p></details>
-    <details><summary>Does it need WSL, a virtual machine or a driver?</summary>
-      <p>No. The filesystem readers are written into the app itself. The drive letter uses Windows’ own built-in file-sharing client talking to the app on this computer only.</p></details>
-    <details><summary>Which Windows versions are supported?</summary>
-      <p>Windows 11, 64-bit. Mounting as a drive letter needs version 24H2 or newer; browsing and copying work on earlier versions of Windows 11.</p></details>
-    <details><summary>My disk isn’t supported. What now?</summary>
-      <p>Open an issue on <a href="https://github.com/yairpatch/linux-drive-reader/issues">GitHub</a> with the filesystem type the app shows. Unsupported formats are recognised and named, even when they can’t be opened yet.</p></details>
-  </section>
-
-  <section class="wrap final">
-    <img src="assets/icon.png" alt="" width="64" height="64">
-    <h2>Get your files back.</h2>
-    <a class="btn primary" href="https://github.com/yairpatch/linux-drive-reader/releases/latest/download/LinuxDriveReaderSetup.exe">Download for Windows</a>
+  <section id="releases">
+    <h2>Releases</h2>
+    <p><b>1.0.0</b> · 20 November 2026 · First release. <a href="https://github.com/yairpatch/linux-drive-reader/releases">All releases</a></p>
+    <p>Found a disk it can’t read, or a bug? <a href="https://github.com/yairpatch/linux-drive-reader/issues">Open an issue</a> and say what the app shows for that partition.</p>
   </section>
 </main>
 
-<footer class="wrap foot">
-  <span>Linux Drive Reader · <a href="https://github.com/yairpatch/linux-drive-reader/blob/main/LICENSE">Apache License 2.0</a></span>
-  <span><a href="https://github.com/yairpatch/linux-drive-reader">Source</a> · <a href="https://github.com/yairpatch/linux-drive-reader/releases">All releases</a> · <a href="https://github.com/yairpatch/linux-drive-reader/issues">Report a problem</a></span>
+<footer>
+  <span>Free and open source under the <a href="https://github.com/yairpatch/linux-drive-reader/blob/main/LICENSE">Apache License 2.0</a>.</span>
+  <span>Not affiliated with any Linux distribution or with Microsoft.</span>
 </footer>
 
 <script>
-  // Show the current release number; the download links already point at the latest release.
+  // Fill in the current release's version and file size; the link itself always points at the latest release.
   fetch('https://api.github.com/repos/yairpatch/linux-drive-reader/releases/latest')
     .then(r => r.ok ? r.json() : null)
-    .then(r => { if (r && r.tag_name) document.getElementById('version').textContent = 'Version ' + r.tag_name.replace(/^v/, ''); })
+    .then(r => {
+      if (!r) return;
+      document.getElementById('ver').textContent = 'Version ' + r.tag_name.replace(/^v/, '');
+      const a = (r.assets || []).find(x => x.name === 'LinuxDriveReaderSetup.exe');
+      if (a) document.getElementById('size').textContent = Math.round(a.size / 1048576) + ' MB';
+    })
     .catch(() => {});
 </script>
 </body>
