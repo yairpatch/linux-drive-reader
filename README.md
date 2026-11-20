@@ -12,6 +12,8 @@ Version 1 is a read-only file browser: pick a partition, browse it, copy files o
 
 `powershell -File tools\publish.ps1` builds `dist\LinuxDriveReaderSetup.exe` and `dist\LinuxDriveReader.exe`: the same self-contained program (no .NET needed on the target PC) under two names. Run under a name containing "Setup" it shows a setup window; otherwise it runs without installing. Installing copies the exe to Program Files (or the user's own programs folder), adds a Start menu shortcut and an "Installed apps" entry; uninstalling is `LinuxDriveReader.exe --uninstall`. Scripted: `--install [--peruser] [--desktop] --quiet`. The exe is not code-signed.
 
+On GitHub, `.github/workflows/build-installer.yml` runs the same script: every push to `main` keeps the result as a downloadable artifact, and pushing a tag such as `v1.2.0` creates a release with the installer attached. The tests are not run there, because their disk images are built on Linux and are not in the repository.
+
 ## Drive letter
 
 "Mount as drive" publishes the open volume through a small read-only SMB 2.1 server built into the app (`src/LinuxFs.Core/Smb`, bound to 127.0.0.1 only) and maps it with Windows' own `net use`. The result is a real drive letter that File Explorer and every other program can read. No driver is involved. It needs Windows 11 24H2 or newer, because older versions cannot map a share on a custom port. The server's port and password are created once per Windows user and kept in `%LOCALAPPDATA%\LinuxDriveReader\share.json`.

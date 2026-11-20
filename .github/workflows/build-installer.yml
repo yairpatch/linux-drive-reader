@@ -1,0 +1,58 @@
+name: Build installer
+
+# Every push to main builds the installer and keeps it as a downloadable artifact.
+# Pushing a tag such as v1.2.0 also creates a GitHub release with the installer attached.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the release
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Work out the version
+        id: version
+        shell: pwsh
+        run: |
+          # A tag v1.2.0 builds version 1.2.0; anything else builds the version written in the project file.
+          if ($env:GITHUB_REF -match '^refs/tags/v(\d+\.\d+\.\d+)$') { "value=$($Matches[1])" >> $env:GITHUB_OUTPUT }
+          elseif ($env:GITHUB_REF -like 'refs/tags/*') { throw "Tag must look like v1.2.3, got $env:GITHUB_REF_NAME" }
+          else { "value=" >> $env:GITHUB_OUTPUT }
+
+      - name: Build
+        shell: pwsh
+        run: ./tools/publish.ps1 -Version '${{ steps.version.outputs.value }}'
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.exe | ForEach-Object { "$((Get-FileHash $_ -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist/SHA256SUMS.txt
+          Get-Content dist/SHA256SUMS.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LinuxDriveReader
+          path: |
+            dist/LinuxDriveReaderSetup.exe
+            dist/LinuxDriveReader.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME dist/LinuxDriveReaderSetup.exe dist/LinuxDriveReader.exe dist/SHA256SUMS.txt --title "Linux Drive Reader $env:GITHUB_REF_NAME" --generate-notes

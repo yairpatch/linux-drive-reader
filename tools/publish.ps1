@@ -3,11 +3,15 @@
 #   dist\LinuxDriveReader.exe        the same program, runs without installing
 # Scripted install:   LinuxDriveReaderSetup.exe --install [--peruser] [--desktop] --quiet
 # Scripted uninstall: "<install folder>\LinuxDriveReader.exe" --uninstall --quiet
+#   -Version 1.2.3 overrides the version written in the project file (the GitHub workflow passes the tag).
+param([string]$Version = '')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $dist = Join-Path $root 'dist'
 if (Test-Path $dist) { Remove-Item $dist -Recurse -Force }
-& dotnet publish (Join-Path $root 'src\LinuxDriveReader') -c Release -r win-x64 --self-contained true -o $dist -nologo -v q -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none
+$options = @('-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true', '-p:EnableCompressionInSingleFile=true', '-p:DebugType=none')
+if ($Version) { $options += "-p:Version=$Version" }
+& dotnet publish (Join-Path $root 'src\LinuxDriveReader') -c Release -r win-x64 --self-contained true -o $dist -nologo -v q @options
 if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 Copy-Item (Join-Path $dist 'LinuxDriveReader.exe') (Join-Path $dist 'LinuxDriveReaderSetup.exe')
 Get-ChildItem $dist | ForEach-Object { '{0,-32} {1,8:N1} MB' -f $_.Name, ($_.Length / 1MB) }
