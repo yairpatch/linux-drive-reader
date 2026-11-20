@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/LinuxDriveReader/LinuxDriveReader.csproj" />
+    <Project Path="src/LinuxFs.Core/LinuxFs.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/LinuxFs.Tests/LinuxFs.Tests.csproj" />
+  </Folder>
+</Solution>
