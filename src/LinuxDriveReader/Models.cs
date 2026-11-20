@@ -15,20 +15,44 @@ public sealed class DiskItem
     public ObservableCollection<object> Volumes { get; } = new();
 }
 
-public sealed class VolumeItem
+/// <summary>
+/// Anything that can sit under a disk: a partition, an LVM logical volume, or the unlocked inside of an
+/// encrypted volume. Containers (LVM, LUKS) list what they hold as children.
+/// </summary>
+public sealed class VolumeItem : System.ComponentModel.INotifyPropertyChanged
 {
     public required DiskItem Disk { get; init; }
-    public required VolumeInfo Info { get; init; }
-    public bool Supported => Info.FileSystem.Supported;
-    public double Opacity => Supported ? 1.0 : 0.55;
+    /// <summary>"Partition 2", "Volume vg/root", "Unlocked contents"…</summary>
+    public required string Name { get; init; }
+    public required long Size { get; init; }
+    public required LinuxFs.Core.Detection.DetectedFs Fs { get; init; }
+    public string PartitionType { get; init; } = "";
+    public string? PartitionName { get; init; }
+    /// <summary>Turns a handle to the whole disk into this volume's contents.</summary>
+    public required Func<IBlockDevice, IBlockDevice> Map { get; init; }
+    public ObservableCollection<object> Children { get; } = new();
+
+    private LinuxFs.Core.Containers.LuksKey? _key;
+    /// <summary>Set once an encrypted volume has been unlocked.</summary>
+    public LinuxFs.Core.Containers.LuksKey? Key
+    {
+        get => _key;
+        set { _key = value; PropertyChanged?.Invoke(this, new(nameof(Detail))); }
+    }
+
+    public bool IsLuks => Fs.Type == "LUKS";
+    public bool IsLvm => Fs.Type == "LVM";
+    /// <summary>A filesystem this app can browse.</summary>
+    public bool Supported => Fs.Supported;
+    public double Opacity => Supported || IsLuks || IsLvm ? 1.0 : 0.55;
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
     public string Title
     {
         get
         {
-            string what = Info.Partition.Number == 0 ? "Whole disk" : $"Partition {Info.Partition.Number}";
-            string label = Info.FileSystem.Label ?? Info.Partition.Name ?? "";
-            return label.Length > 0 ? $"{what} — {label}" : what;
+            string label = Fs.Label ?? PartitionName ?? "";
+            return label.Length > 0 ? $"{Name} — {label}" : Name;
         }
     }
 
@@ -36,12 +60,19 @@ public sealed class VolumeItem
     {
         get
         {
-            var fs = Info.FileSystem;
-            string type = fs.Type == LinuxFs.Core.Detection.FsDetector.Unknown ? Info.Partition.TypeName : fs.Type;
-            string note = fs.Supported ? "" : fs.Type == LinuxFs.Core.Detection.FsDetector.Unknown ? " · no known filesystem" : $" · {fs.Note ?? "not supported yet"}";
-            return $"{type} · {Format.Size(Info.Partition.Length)}{note}";
+            string size = Format.Size(Size);
+            if (IsLuks) return $"Encrypted (LUKS) · {size} · " + (Key == null ? "select to unlock" : "unlocked");
+            if (IsLvm) return $"LVM volume group · {size}";
+            bool unknown = Fs.Type == LinuxFs.Core.Detection.FsDetector.Unknown;
+            string type = unknown && PartitionType.Length > 0 ? PartitionType : Fs.Type;
+            string note = Fs.Supported ? "" : unknown ? " · no known filesystem" : $" · {Fs.Note ?? "not supported yet"}";
+            return $"{type} · {size}{note}";
         }
     }
+
+    /// <summary>This volume and everything inside it that can be browsed.</summary>
+    public IEnumerable<VolumeItem> Browsable() =>
+        (Supported ? new[] { this } : Array.Empty<VolumeItem>()).Concat(Children.OfType<VolumeItem>().SelectMany(c => c.Browsable()));
 }
 
 public sealed class NoteItem

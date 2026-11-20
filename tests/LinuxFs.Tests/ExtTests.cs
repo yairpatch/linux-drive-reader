@@ -13,7 +13,7 @@ namespace LinuxFs.Tests;
 /// </summary>
 public class ExtTests
 {
-    private static readonly string Images = FindImages();
+    internal static readonly string Images = FindImages();
 
     private static string FindImages()
     {
@@ -63,7 +63,7 @@ public class ExtTests
         return Convert.ToHexString(SHA256.HashData(s)).ToLowerInvariant();
     }
 
-    private static void AssertMatchesLinux(IBlockDevice volume, string manifestPrefix, string expectedType)
+    internal static void AssertMatchesLinux(IBlockDevice volume, string manifestPrefix, string expectedType)
     {
         var expected = LoadManifest(manifestPrefix);
         using var fs = FileSystems.Open(volume);

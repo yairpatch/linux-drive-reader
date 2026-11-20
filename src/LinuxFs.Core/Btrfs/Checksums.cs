@@ -96,11 +96,15 @@ internal static class Checksums
     };
 
     /// <summary>BLAKE2b with a 256-bit result and no key.</summary>
-    public static void Blake2b256(ReadOnlySpan<byte> data, Span<byte> output)
+    public static void Blake2b256(ReadOnlySpan<byte> data, Span<byte> output) => Blake2b(data, output[..32]);
+
+    /// <summary>BLAKE2b with no key; the result is as long as <paramref name="output"/> (1 to 64 bytes).</summary>
+    public static void Blake2b(ReadOnlySpan<byte> data, Span<byte> output)
     {
+        if (output.Length is < 1 or > 64) throw new ArgumentException("BLAKE2b output must be 1 to 64 bytes.");
         Span<ulong> h = stackalloc ulong[8];
         Iv.CopyTo(h);
-        h[0] ^= 0x01010020;
+        h[0] ^= 0x01010000UL ^ (uint)output.Length;
         Span<byte> last = stackalloc byte[128];
         ulong t = 0;
         while (data.Length > 128)
@@ -112,7 +116,9 @@ internal static class Checksums
         last.Clear();
         data.CopyTo(last);
         Blake2Compress(h, last, t + (ulong)data.Length, true);
-        for (int i = 0; i < 4; i++) BinaryPrimitives.WriteUInt64LittleEndian(output[(i * 8)..], h[i]);
+        Span<byte> full = stackalloc byte[64];
+        for (int i = 0; i < 8; i++) BinaryPrimitives.WriteUInt64LittleEndian(full[(i * 8)..], h[i]);
+        full[..output.Length].CopyTo(output);
     }
 
     private static void Blake2Compress(Span<ulong> h, ReadOnlySpan<byte> block, ulong t, bool final)

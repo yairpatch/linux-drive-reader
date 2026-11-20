@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the disk images the tests read. Development-time only: needs Linux and root
 # (it formats and loop-mounts images). The app itself never uses this.
-#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs|xfs]
+#   usage: sudo bash make-test-images.sh <output-dir> [ext|btrfs|xfs|crypt]
 set -euo pipefail
 OUT="$1"
 if [ $# -ge 2 ]; then ONLY=$2; else ONLY=all; fi
@@ -9,7 +9,14 @@ W=$(mktemp -d)
 MNT=$W/mnt
 SRC=$W/src
 mkdir -p "$OUT" "$MNT" "$SRC"
-cleanup() { umount "$MNT" 2>/dev/null || true; rm -rf "$W"; }
+LOOPS=""
+cleanup() {
+  umount "$MNT" 2>/dev/null || true
+  vgchange -an testvg cryptvg >/dev/null 2>&1 || true
+  for m in /dev/mapper/t_*; do [ -e "$m" ] && cryptsetup close "$(basename "$m")" 2>/dev/null || true; done
+  for l in $LOOPS; do losetup -d "$l" 2>/dev/null || true; done
+  rm -rf "$W"
+}
 trap cleanup EXIT
 
 # ---- the file tree every image gets -------------------------------------
@@ -256,5 +263,81 @@ if mkfs.xfs -q -f -m crc=0 -n ftype=0 -L xfsv4 -p "$V" "$P" 2>/dev/null; then
 else
   echo "SKIPPED xfs_v4: this mkfs.xfs no longer supports the old v4 format"
 fi
+fi
+
+if [ "$ONLY" = all ] || [ "$ONLY" = crypt ]; then
+# ---- LUKS and LVM --------------------------------------------------------
+PW="correct horse"
+PW2="second password"
+pidof systemd-udevd >/dev/null 2>&1 || export DM_DISABLE_UDEV=1
+export LVM_SUPPRESS_FD_WARNINGS=1
+fill_dev() { # <block device> <fs type> <label> <manifest prefix> <source tree>
+  mke2fs -q -F -t "$2" -L "$3" "$1"
+  mount "$1" "$MNT"
+  cp -a "$5/." "$MNT/"
+  sync
+  manifest "$MNT" "$4"
+  umount "$MNT"
+}
+build_luks() { # <name> <fs type> <cryptsetup luksFormat args...>
+  local name=$1 fst=$2; shift 2
+  local img=$W/$name.img
+  rm -f "$img"; truncate -s 64M "$img"
+  printf '%s' "$PW" | cryptsetup luksFormat -q --key-file - "$@" "$img"
+  printf '%s' "$PW" | cryptsetup open --key-file - "$img" "t_$name"
+  fill_dev "/dev/mapper/t_$name" "$fst" "$name" "$OUT/$name.img" "$SMALL"
+  cryptsetup close "t_$name"
+  cp "$img" "$OUT/$name.img"
+  echo "built $name.img"
+}
+build_luks luks1_xts      ext4 --type luks1 --pbkdf-force-iterations 2000
+build_luks luks1_cbc      ext2 --type luks1 --pbkdf-force-iterations 2000 --cipher aes-cbc-essiv:sha256 --key-size 256 --hash sha1
+build_luks luks2_argon2id ext4 --type luks2 --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-force-iterations 4 --pbkdf-parallel 4
+build_luks luks2_argon2i  ext4 --type luks2 --pbkdf argon2i --pbkdf-memory 32768 --pbkdf-force-iterations 5 --pbkdf-parallel 1 --sector-size 4096
+build_luks luks2_pbkdf2   ext4 --type luks2 --pbkdf pbkdf2 --pbkdf-force-iterations 2000 --hash sha512 --key-size 256
+# a second password in another key slot
+printf '%s' "$PW" > "$W/k1"; printf '%s' "$PW2" > "$W/k2"
+cryptsetup luksAddKey -q --key-file "$W/k1" --pbkdf pbkdf2 --pbkdf-force-iterations 2000 "$OUT/luks2_pbkdf2.img" "$W/k2"
+
+# LVM straight on a disk; "root" is grown later so it ends up in two separate pieces
+BIGROOT=$W/bigroot; mkdir "$BIGROOT"; cp -a "$SMALL/." "$BIGROOT/"; head -c 24000000 /dev/urandom > "$BIGROOT/big.bin"
+L=$W/lvm.img; truncate -s 96M "$L"
+LD=$(losetup -f --show "$L"); LOOPS="$LOOPS $LD"
+pvcreate -q -ff -y "$LD" >/dev/null
+vgcreate -q testvg "$LD" >/dev/null
+lvcreate -q -y -L 20M -n root testvg >/dev/null
+lvcreate -q -y -L 12M -n home testvg >/dev/null
+lvextend -q -L +16M testvg/root >/dev/null
+fill_dev /dev/mapper/testvg-root ext4 lvroot "$OUT/lvm.img.root" "$BIGROOT"
+fill_dev /dev/mapper/testvg-home ext2 lvhome "$OUT/lvm.img.home" "$SMALL"
+vgchange -an testvg >/dev/null
+losetup -d "$LD"
+cp "$L" "$OUT/lvm.img"
+echo "built lvm.img"
+
+# The classic encrypted install: a boot partition, then LUKS holding LVM holding the filesystems
+C=$W/luks_lvm.img; truncate -s 164M "$C"
+sfdisk -q "$C" <<'EOF'
+label: gpt
+start=2048, size=32768, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, name="boot"
+start=34816, size=294912, type=CA7D7CCB-63ED-4C53-861C-1742536059CC, name="cryptroot"
+EOF
+CD=$(losetup -f --show -P "$C"); LOOPS="$LOOPS $CD"
+fill_dev "$CD"p1 ext4 boot "$OUT/luks_lvm.img.boot" "$SMALL"
+printf '%s' "$PW" | cryptsetup luksFormat -q --key-file - --type luks2 --pbkdf argon2id --pbkdf-memory 65536 --pbkdf-force-iterations 4 --pbkdf-parallel 2 "$CD"p2
+printf '%s' "$PW" | cryptsetup open --key-file - "$CD"p2 t_cl
+pvcreate -q -ff -y /dev/mapper/t_cl >/dev/null
+vgcreate -q cryptvg /dev/mapper/t_cl >/dev/null
+lvcreate -q -y -L 64M -n root cryptvg >/dev/null
+lvcreate -q -y -L 16M -n swap cryptvg >/dev/null
+lvcreate -q -y -l 100%FREE -n data cryptvg >/dev/null
+fill_dev /dev/mapper/cryptvg-root ext4 cryptroot "$OUT/luks_lvm.img.root" "$BIGROOT"
+mkswap -q /dev/mapper/cryptvg-swap >/dev/null
+fill_dev /dev/mapper/cryptvg-data ext2 cryptdata "$OUT/luks_lvm.img.data" "$SMALL"
+vgchange -an cryptvg >/dev/null
+cryptsetup close t_cl
+losetup -d "$CD"
+cp "$C" "$OUT/luks_lvm.img"
+echo "built luks_lvm.img"
 fi
 ls -la "$OUT"/*.img

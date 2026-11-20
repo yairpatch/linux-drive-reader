@@ -49,12 +49,12 @@
                             <TextBlock Text="{Binding Detail}" Foreground="#666" FontSize="11"/>
                         </StackPanel>
                     </HierarchicalDataTemplate>
-                    <DataTemplate DataType="{x:Type local:VolumeItem}">
+                    <HierarchicalDataTemplate DataType="{x:Type local:VolumeItem}" ItemsSource="{Binding Children}">
                         <StackPanel Margin="0,1" Opacity="{Binding Opacity}">
                             <TextBlock Text="{Binding Title}"/>
                             <TextBlock Text="{Binding Detail}" Foreground="#666" FontSize="11"/>
                         </StackPanel>
-                    </DataTemplate>
+                    </HierarchicalDataTemplate>
                     <DataTemplate DataType="{x:Type local:NoteItem}">
                         <TextBlock Text="{Binding Text}" Foreground="#A05A00" TextWrapping="Wrap" MaxWidth="260" FontSize="11"/>
                     </DataTemplate>

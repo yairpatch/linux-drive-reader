@@ -6,6 +6,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using LinuxFs.Core;
+using LinuxFs.Core.Containers;
+using LinuxFs.Core.Detection;
 using LinuxFs.Core.Devices;
 using Microsoft.Win32;
 
@@ -35,7 +37,7 @@ public partial class MainWindow : Window
             foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
                 if (File.Exists(arg)) AddImage(arg);
             await RefreshDisksAsync();
-            var first = _imageItems.SelectMany(i => i.Volumes.OfType<VolumeItem>()).FirstOrDefault(v => v.Supported);
+            var first = _imageItems.SelectMany(i => i.Volumes.OfType<VolumeItem>()).SelectMany(v => v.Browsable()).FirstOrDefault();
             if (first != null) await OpenVolumeAsync(first);
         };
         Closed += (_, _) => CloseVolume();
@@ -83,7 +85,19 @@ public partial class MainWindow : Window
         try
         {
             using var dev = item.Open();
-            foreach (var v in VolumeScanner.Scan(dev)) found.Add(new VolumeItem { Disk = item, Info = v });
+            foreach (var v in VolumeScanner.Scan(dev))
+            {
+                long offset = v.Partition.Offset, length = v.Partition.Length;
+                var volume = new VolumeItem
+                {
+                    Disk = item, Fs = v.FileSystem, Size = length,
+                    Name = v.Partition.Number == 0 ? "Whole disk" : $"Partition {v.Partition.Number}",
+                    PartitionType = v.Partition.TypeName, PartitionName = v.Partition.Name,
+                    Map = root => new SubDevice(root, offset, length),
+                };
+                Expand(volume, dev);
+                found.Add(volume);
+            }
             if (found.Count == 0) found.Add(new NoteItem { Text = "No partitions found." });
         }
         catch (UnauthorizedAccessException) { found.Add(new NoteItem { Text = "Administrator rights are needed to read this disk." }); }
@@ -93,6 +107,100 @@ public partial class MainWindow : Window
             item.Volumes.Clear();
             foreach (var f in found) item.Volumes.Add(f);
         });
+    }
+
+    /// <summary>
+    /// Lists what a container holds: the logical volumes of an LVM group, or the inside of an
+    /// encrypted volume once it has a key. Containers can be nested, so this recurses.
+    /// </summary>
+    private static void Expand(VolumeItem item, IBlockDevice root)
+    {
+        var children = new List<object>();
+        try
+        {
+            if (item.IsLvm)
+            {
+                var device = item.Map(root);
+                var group = LvmGroup.Read(device);
+                foreach (var lv in group.Volumes)
+                {
+                    var fs = lv.Supported ? FsDetector.Detect(lv.Open(device)) : new DetectedFs("LVM volume", null, false, lv.Note);
+                    var child = new VolumeItem
+                    {
+                        Disk = item.Disk, Name = $"Volume {group.Name}/{lv.Name}", Size = lv.Size, Fs = fs,
+                        Map = r => lv.Open(item.Map(r)),
+                    };
+                    Expand(child, root);
+                    children.Add(child);
+                }
+                if (children.Count == 0) children.Add(new NoteItem { Text = "This volume group has no volumes." });
+            }
+            else if (item.IsLuks && item.Key is { } key)
+            {
+                var device = key.Open(item.Map(root));
+                var child = new VolumeItem
+                {
+                    Disk = item.Disk, Name = "Unlocked contents", Size = device.Length, Fs = FsDetector.Detect(device),
+                    Map = r => key.Open(item.Map(r)),
+                };
+                Expand(child, root);
+                children.Add(child);
+            }
+            else return;
+        }
+        catch (Exception ex) when (IsExpected(ex)) { children.Add(new NoteItem { Text = "Cannot read this: " + ex.Message }); }
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            item.Children.Clear();
+            foreach (var c in children) item.Children.Add(c);
+        });
+    }
+
+    /// <summary>Asks for the password of an encrypted volume until it is right or the user gives up.</summary>
+    private async Task UnlockAsync(VolumeItem v)
+    {
+        string? error = null;
+        while (true)
+        {
+            var dialog = new PasswordDialog(this, v.Title, error);
+            if (dialog.ShowDialog() != true) { SetStatus("Ready"); return; }
+            string password = dialog.Password;
+            _busy = true;
+            Progress.Visibility = Visibility.Visible;
+            UpdateButtons();
+            SetStatus("Checking the password… this can take several seconds.");
+            try
+            {
+                await Task.Run(() =>
+                {
+                    using var root = v.Disk.Open();
+                    var key = LuksVolume.Open(v.Map(root)).Unlock(password);
+                    Application.Current.Dispatcher.Invoke(() => v.Key = key);
+                    Expand(v, root);
+                });
+                break;
+            }
+            catch (WrongPasswordException ex) { error = ex.Message; }
+            catch (Exception ex) when (IsExpected(ex)) { ShowError("This encrypted volume could not be unlocked: " + ex.Message); return; }
+            finally
+            {
+                _busy = false;
+                Progress.Visibility = Visibility.Collapsed;
+                UpdateButtons();
+                SetStatus("Ready");
+            }
+        }
+        var inside = v.Browsable().ToList();
+        if (inside.Count == 1) await OpenVolumeAsync(inside[0]);
+        else ShowContainerHint(v);
+    }
+
+    private void ShowContainerHint(VolumeItem v)
+    {
+        EmptyHint.Text = v.Browsable().Any()
+            ? "Choose one of the volumes listed under it on the left."
+            : "Nothing inside this volume can be read by this version.";
+        EmptyHint.Visibility = Visibility.Visible;
     }
 
     private DiskItem? AddImage(string path)
@@ -134,7 +242,8 @@ public partial class MainWindow : Window
         var item = AddImage(path);
         if (item == null) return;
         await RefreshDisksAsync();
-        var first = item.Volumes.OfType<VolumeItem>().FirstOrDefault(v => v.Supported);
+        var first = item.Volumes.OfType<VolumeItem>().SelectMany(v => v.Browsable()).FirstOrDefault()
+            ?? item.Volumes.OfType<VolumeItem>().FirstOrDefault(v => v.IsLuks);
         if (first != null) await OpenVolumeAsync(first);
     }
 
@@ -154,7 +263,9 @@ public partial class MainWindow : Window
 
     private async void DiskTree_SelectedItemChanged(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
-        if (e.NewValue is VolumeItem v && v != _volume && !_busy) await OpenVolumeAsync(v);
+        // Deferred so the click finishes before a password prompt can open on top of it.
+        if (e.NewValue is VolumeItem v && v != _volume && !_busy)
+            await Dispatcher.InvokeAsync(() => OpenVolumeAsync(v)).Task.Unwrap();
     }
 
     private void CloseVolume()
@@ -175,11 +286,13 @@ public partial class MainWindow : Window
         PathBox.Text = "";
         UpdateButtons();
 
+        if (v.IsLuks && v.Key == null) { await UnlockAsync(v); return; }
+        if (v.IsLuks || v.IsLvm) { ShowContainerHint(v); SetStatus("Ready"); return; }
         if (!v.Supported)
         {
-            EmptyHint.Text = v.Info.FileSystem.Type == LinuxFs.Core.Detection.FsDetector.Unknown
-                ? "No known filesystem was found on this partition."
-                : $"This partition contains {v.Info.FileSystem.Type}, which this version cannot read yet. It currently reads ext2, ext3, ext4, btrfs and xfs.";
+            EmptyHint.Text = v.Fs.Type == FsDetector.Unknown
+                ? "No known filesystem was found here."
+                : $"This contains {v.Fs.Type}, which this version cannot read ({v.Fs.Note ?? "not supported yet"}). It reads ext2, ext3, ext4, btrfs and xfs.";
             EmptyHint.Visibility = Visibility.Visible;
             SetStatus("Ready");
             return;
@@ -191,11 +304,7 @@ public partial class MainWindow : Window
             var (device, fs) = await Task.Run(() =>
             {
                 var dev = v.Disk.Open();
-                try
-                {
-                    var part = new SubDevice(dev, v.Info.Partition.Offset, v.Info.Partition.Length);
-                    return (dev, FileSystems.Open(part));
-                }
+                try { return (dev, FileSystems.Open(v.Map(dev))); }
                 catch { dev.Dispose(); throw; }
             });
             _device = device; _fs = fs; _volume = v;
