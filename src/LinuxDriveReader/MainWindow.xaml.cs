@@ -41,7 +41,8 @@ public partial class MainWindow : Window
         ApplyColumnSetting();
         AboutTitle.Text = $"Linux Drive Reader {System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3)}";
 
-        AdminBar.Visibility = App.IsElevated ? Visibility.Collapsed : Visibility.Visible;
+        // LDR_DEMO=1 hides this PC's own disks and the administrator notice: used for website screenshots.
+        AdminBar.Visibility = App.IsElevated || DemoMode ? Visibility.Collapsed : Visibility.Visible;
         Loaded += async (_, _) =>
         {
             foreach (var arg in Environment.GetCommandLineArgs().Skip(1))
@@ -80,9 +81,12 @@ public partial class MainWindow : Window
         SetStatus(StatusForFolder());
     }
 
+    private static bool DemoMode => Environment.GetEnvironmentVariable("LDR_DEMO") == "1";
+
     private static List<DiskItem> ScanPhysicalDisks()
     {
         var items = new List<DiskItem>();
+        if (DemoMode) return items;
         List<DiskInfo> disks;
         try { disks = DiskEnumerator.Enumerate(); }
         catch (Exception) { return items; }
@@ -314,6 +318,10 @@ public partial class MainWindow : Window
                 WarningBar.Visibility = Visibility.Visible;
             }
             await NavigateAsync(new List<FsNode> { fs.Root }, remember: false);
+            // LDR_DEMO_PATH=some/folder opens that folder if it exists here: used for website screenshots.
+            if (DemoMode && Environment.GetEnvironmentVariable("LDR_DEMO_PATH") is { Length: > 0 } demoPath
+                && await Task.Run(() => FsPath.Resolve(fs, new List<FsNode> { fs.Root }, demoPath)) is { } demoTrail && demoTrail[^1].Kind == FsNodeKind.Directory)
+                await NavigateAsync(demoTrail, remember: false);
         }
         catch (Exception ex) when (IsExpected(ex))
         {
