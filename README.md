@@ -48,3 +48,7 @@ Implement `IFileSystem` (see `Ext/ExtFileSystem.cs`), mark the type as supported
 
 Journal replay for uncleanly unmounted ext3/4 (the app warns instead), fscrypt-encrypted folders,
 applying the xfs log after an unclean shutdown (the app warns instead), xfs metadata checksum verification, multi-disk btrfs (RAID 0/10/5/6), LVM volumes that span several disks or use thin/RAID/cache types, LUKS unlocked by TPM or token, non-AES ciphers, f2fs, and write support.
+
+## Licence
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
